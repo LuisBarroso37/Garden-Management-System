@@ -9,6 +9,7 @@ import {
   validatorCompiler,
 } from 'fastify-zod-openapi';
 import type { Config } from './config.js';
+import { gardenRoutes } from './routes/gardens.js';
 
 export async function buildApp(config: Config) {
   const app = Fastify({
@@ -52,6 +53,8 @@ export async function buildApp(config: Config) {
   app.get('/health-check', { schema: { tags: ['System'] } }, async (_request, reply) => {
     reply.status(200).send();
   });
+
+  await app.register(gardenRoutes, { prefix: '/api/gardens' });
 
   return app;
 }

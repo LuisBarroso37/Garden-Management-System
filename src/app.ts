@@ -10,6 +10,7 @@ import {
 } from 'fastify-zod-openapi';
 import type { Config } from './config.js';
 import { gardenRoutes } from './routes/gardens.js';
+import { plantRoutes } from './routes/plants.js';
 
 export async function buildApp(config: Config) {
   const app = Fastify({
@@ -55,6 +56,7 @@ export async function buildApp(config: Config) {
   });
 
   await app.register(gardenRoutes, { prefix: '/api/gardens' });
+  await app.register(plantRoutes, { prefix: '/api/gardens/:gardenId/plants' });
 
   return app;
 }

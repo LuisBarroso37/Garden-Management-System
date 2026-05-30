@@ -1,0 +1,46 @@
+services:
+  app:
+    build:
+      context: .
+      target: deps
+    command: npx tsx watch src/server.ts
+    volumes:
+      - .:/app
+      - /app/node_modules
+    develop:
+      watch:
+        - action: rebuild
+          path: package.json
+        - action: rebuild
+          path: package-lock.json
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=info
+      - DATABASE_URL=postgresql://garden_user:garden_pass@db:5432/garden_db
+      - PORT=3000
+      - CORS_ORIGIN=*
+    ports:
+      - "3000:3000"
+      - "9229:9229" # remote debugging port
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: garden_user
+      POSTGRES_PASSWORD: garden_pass
+      POSTGRES_DB: garden_db
+    volumes:
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U garden_user -d garden_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:

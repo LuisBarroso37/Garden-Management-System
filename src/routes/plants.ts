@@ -1,3 +1,4 @@
+import type { Kysely } from 'kysely';
 import type { FastifyPluginAsyncZodOpenApi } from 'fastify-zod-openapi';
 import { errorResponseSchema } from '../schemas/error.js';
 import { plantConnector, type PlantConnector } from '../connectors/plant.connector.js';
@@ -11,11 +12,19 @@ import { createdResultSchema } from '../schemas/created-result.js';
 import { gardenConnector, GardenConnector } from '../connectors/garden.connector.js';
 import { gardenIdParamsSchema } from '../schemas/gardens.js';
 import { getAvailableGardenSurfaceArea } from '../utils/get-available-surface-area.js';
+import {
+  plantMetricConnector,
+  PlantMetricConnector,
+} from '../connectors/plant-metric.connector.js';
+import { INITIAL_HUMIDITY_LEVEL } from '../schemas/irrigation.js';
+import type { DB } from '../db/types.js';
 
 export const createPlantRoutes =
   (
     plantConnector: PlantConnector,
     gardenConnector: GardenConnector,
+    plantMetricConnector: PlantMetricConnector,
+    database: Kysely<DB>,
   ): FastifyPluginAsyncZodOpenApi =>
   async (app) => {
     app.get(
@@ -101,7 +110,15 @@ export const createPlantRoutes =
           });
         }
 
-        const result = await plantConnector.createPlant(gardenId, body);
+        const result = await database.transaction().execute(async (trx) => {
+          const plant = await plantConnector.withTransaction(trx).createPlant(gardenId, body);
+          await plantMetricConnector.withTransaction(trx).createPlantMetric({
+            plantId: plant.id,
+            currentHumidityLevel: INITIAL_HUMIDITY_LEVEL,
+          });
+
+          return plant;
+        });
 
         return reply.status(201).send(result);
       },
@@ -173,4 +190,11 @@ export const createPlantRoutes =
     );
   };
 
-export const plantRoutes = createPlantRoutes(plantConnector, gardenConnector);
+import { createKyselyDatabaseClient } from '../db/index.js';
+
+export const plantRoutes = createPlantRoutes(
+  plantConnector,
+  gardenConnector,
+  plantMetricConnector,
+  createKyselyDatabaseClient(),
+);

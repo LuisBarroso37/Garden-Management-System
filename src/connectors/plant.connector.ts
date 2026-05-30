@@ -146,6 +146,7 @@ export const createPlantConnector = (database: Kysely<DB>) => {
     deletePlant: z
       .function({ input: [z.uuid(), z.uuid()], output: z.void() })
       .implementAsync(deletePlant),
+    withTransaction: (trx: Kysely<DB>) => createPlantConnector(trx),
   };
 };
 

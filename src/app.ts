@@ -9,8 +9,10 @@ import {
   validatorCompiler,
 } from 'fastify-zod-openapi';
 import type { Config } from './config.js';
+import type { FastifyError } from 'fastify';
 import { gardenRoutes } from './routes/gardens.js';
 import { plantRoutes } from './routes/plants.js';
+import { irrigationRoutes } from './routes/irrigation.js';
 
 export async function buildApp(config: Config) {
   const app = Fastify({
@@ -55,8 +57,25 @@ export async function buildApp(config: Config) {
     reply.status(200).send();
   });
 
+  app.setErrorHandler((error: FastifyError, _request, reply) => {
+    if (error.validation) {
+      return reply.status(400).send({
+        errorType: 'VALIDATION_ERROR',
+        message: error.message,
+      });
+    }
+
+    app.log.error(error);
+
+    return reply.status(error.statusCode ?? 500).send({
+      errorType: 'INTERNAL_ERROR',
+      message: 'An unexpected error occurred',
+    });
+  });
+
   await app.register(gardenRoutes, { prefix: '/api/gardens' });
   await app.register(plantRoutes, { prefix: '/api/gardens/:gardenId/plants' });
+  await app.register(irrigationRoutes, { prefix: '/api/irrigation' });
 
   return app;
 }

@@ -4,3 +4,4 @@ import utc from 'dayjs/plugin/utc';
 dayjs.extend(utc);
 
 export { dayjs };
+export type { Dayjs } from 'dayjs';

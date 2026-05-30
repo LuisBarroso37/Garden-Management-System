@@ -137,12 +137,12 @@ npm run test
 ## Considerations
 
 - I am assuming that gardens are owned by a single user; if is not the case, a join table could be added to support shared access. The spec doesn't explicitly specify this.
-- I did not add pagination since since a user will normally not have a lot of gardens or plants. Could easily be added in the future.
+- I did not add pagination since a user will normally not have a lot of gardens or plants. Could easily be added in the future.
 - We could add linting rules to make sure that certain folders could import only from a defined set of folders.
 
-## Irrigation System considerations
+## Irrigation System Considerations
 
-## Problem Statement
+### Problem Statement
 
 A scheduler must evaluate every plant's humidity state every minute, send irrigation commands to physical hardware, and track watering duration. This is a real-time event-driven system with per-plant state.
 
@@ -159,7 +159,7 @@ A scheduler must evaluate every plant's humidity state every minute, send irriga
   - **+18%** for fruits
   - **+20%** for flowers
 
-## Architecture Options
+### Architecture Options
 
 I wrote a POST handler to showcase the logic and how it would work but we are, of course, missing other infrastructure. I mocked the irrigation system where we would send commands to. The commands include the duration that water should be given to the plant in case the hardware is capable of taking it into account and closing the water valve after the duration has elaped. This would be the best option and then we would not need to send STOP commands to the hardware.
 
@@ -203,3 +203,91 @@ Tick Lambda
 - Serverless scales well to thousands of plants
 - DynamoDB handles per-plant state with very low latency
 - IoT Core is purpose-built for device communication (MQTT)
+
+## Reporting
+
+### Current Implementation
+
+`GET /api/reports?gardenId=...&from=...&to=...` runs three queries in parallel (`Promise.all`) and assembles the response:
+
+| Metric             | Query                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| Watered plants     | Count distinct plants that received irrigation (had a `lastIrrigationStartTime`) in the period   |
+| Unwatered plants   | Total plants minus watered plants (includes plants that stayed healthy and didn't need watering) |
+| Watering frequency | Group by plant, count distinct irrigation start times                                            |
+| Plants added       | Count plants with `createdAt >= from`                                                            |
+
+This is simple, correct, and fast enough at low volume. The queries hit indexed columns (`gardenId`, `plantId`, `createdAt`, `lastIrrigationStartTime`).
+The current system cannot count the deleted plants at the moment. That would require us to "archive" a plant instead to keep the records in the database.
+
+### Possible Approach: Pre-Aggregated Summaries
+
+At scale (millions of metric rows, frequent report requests), running live aggregation queries becomes expensive. A better approach would be:
+
+```
+┌─────────────────────────────────────────────────┐
+│  Aggregation Job (scheduled, e.g. every 5 min)  │
+│  - Reads raw metrics since last run             │
+│  - Computes: watering count per plant/hour,     │
+│    plants added/deleted per day                 │
+│  - Upserts into summary tables                  │
+└─────────────────────┬───────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────┐
+│  Report Endpoint                                │
+│  - Reads pre-computed summaries                 │
+│  - Instant response, no heavy aggregations      │
+└─────────────────────────────────────────────────┘
+```
+
+**Summary tables:**
+
+```sql
+-- Per-plant hourly watering count (one row per plant per hour).
+-- The job truncates timestamps to the hour (date_trunc('hour', ...))
+-- and upserts the count, so multiple runs accumulate into the same row.
+CREATE TABLE watering_summary (
+  garden_id      UUID NOT NULL,
+  plant_id       UUID NOT NULL,
+  hour           TIMESTAMPTZ NOT NULL,  -- truncated, e.g., '2025-03-15T10:00:00Z'
+  watering_count INTEGER DEFAULT 0,
+  PRIMARY KEY (garden_id, plant_id, hour)
+);
+
+-- Per-garden daily event count
+CREATE TABLE garden_daily_summary (
+  garden_id      UUID NOT NULL,
+  day            DATE NOT NULL,
+  plants_added   INTEGER DEFAULT 0,
+  plants_deleted INTEGER DEFAULT 0,
+  PRIMARY KEY (garden_id, day)
+);
+```
+
+The job upserts rows during the same hour (`INSERT ... ON CONFLICT UPDATE`) so it's idempotent — safe to re-run if it fails mid-execution. In this example, data is at most 5 minutes stale and the smallest queryable unit is 1 hour.
+
+The report endpoint then becomes a simple range query over the summary:
+
+```sql
+SELECT plant_id, SUM(watering_count)
+FROM watering_summary
+WHERE garden_id = $1 AND hour BETWEEN $from AND $to
+GROUP BY plant_id;
+```
+
+This scans ~24 rows per plant for a 24h range, instead of potentially millions of raw metric rows.
+
+**Benefits:**
+
+- Report endpoint responds fast regardless of data volume
+- Aggregation job can run off-peak or on a read replica of the database
+- Summary table is small and easily cacheable:
+  Redis/Memcached — store the report response keyed by gardenId:from:to, TTL matching the aggregation interval (e.g., 5 min). Cache hit = no DB query at all.
+  HTTP caching — set Cache-Control: max-age=300 on the response. Since the data only changes when the aggregation job runs, clients can serve stale responses safely.
+
+**Alternatives considered:**
+
+- **Async report generation** — useful for expensive exports (PDF, CSV) but unnecessary for simple JSON responses
+
+POST /reports kicks off a job and returns a reportId. Client polls GET /reports/:id or gets a webhook/notification when ready. Good for expensive reports (PDF, large date ranges).

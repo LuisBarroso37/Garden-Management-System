@@ -3,6 +3,7 @@ import type { PlantConnector } from '../../src/connectors/plant.connector.js';
 import type { GardenConnector } from '../../src/connectors/garden.connector.js';
 import type { PlantMetricConnector } from '../../src/connectors/plant-metric.connector.js';
 import type { IrrigationConnector } from '../../src/connectors/irrigation.connector.js';
+import type { ReportConnector } from '../../src/connectors/report.connector.js';
 import type { Kysely } from 'kysely';
 import type { DB } from '../../src/db/types.js';
 
@@ -37,5 +38,11 @@ export const createMockDatabase = () =>
   }) as unknown as Kysely<DB>;
 
 export const createMockIrrigationConnector = (): Mocked<IrrigationConnector> => ({
-  sendCommand: vi.fn<IrrigationConnector['sendCommand']>().mockResolvedValue(undefined),
+  sendCommand: vi.fn<IrrigationConnector['sendCommand']>(),
+});
+
+export const createMockReportConnector = (): Mocked<ReportConnector> => ({
+  getWateringFrequency: vi.fn<ReportConnector['getWateringFrequency']>(),
+  getPlantsAddedCount: vi.fn<ReportConnector['getPlantsAddedCount']>(),
+  getTotalPlantCount: vi.fn<ReportConnector['getTotalPlantCount']>(),
 });

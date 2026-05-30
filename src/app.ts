@@ -13,6 +13,7 @@ import type { FastifyError } from 'fastify';
 import { gardenRoutes } from './routes/gardens.js';
 import { plantRoutes } from './routes/plants.js';
 import { irrigationRoutes } from './routes/irrigation.js';
+import { reportRoutes } from './routes/report.js';
 
 export async function buildApp(config: Config) {
   const app = Fastify({
@@ -76,6 +77,7 @@ export async function buildApp(config: Config) {
   await app.register(gardenRoutes, { prefix: '/api/gardens' });
   await app.register(plantRoutes, { prefix: '/api/gardens/:gardenId/plants' });
   await app.register(irrigationRoutes, { prefix: '/api/irrigation' });
+  await app.register(reportRoutes, { prefix: '/api/reports' });
 
   return app;
 }

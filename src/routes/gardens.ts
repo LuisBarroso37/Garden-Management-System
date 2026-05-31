@@ -8,10 +8,13 @@ import {
 import { errorResponseSchema } from '../schemas/error.js';
 import { gardenConnector, GardenConnector } from '../connectors/garden.connector.js';
 import { createdResultSchema } from '../schemas/created-result.js';
+import { authenticate } from '../utils/auth.js';
 
 export const createGardenRoutes =
   (gardenConnector: GardenConnector): FastifyPluginAsyncZodOpenApi =>
   async (app) => {
+    app.addHook('onRequest', authenticate);
+
     app.get(
       '/',
       {
@@ -20,8 +23,9 @@ export const createGardenRoutes =
           response: { 200: gardenSchema.array() },
         },
       },
-      async () => {
-        const gardens = await gardenConnector.getGardens('userId');
+      async (request) => {
+        const { userId } = request;
+        const gardens = await gardenConnector.getGardens(userId);
 
         return gardens.map((garden) => ({
           id: garden.id,
@@ -50,8 +54,9 @@ export const createGardenRoutes =
       },
       async (request, reply) => {
         const { gardenId } = request.params;
+        const { userId } = request;
 
-        const garden = await gardenConnector.getGarden('userId', gardenId);
+        const garden = await gardenConnector.getGarden(userId, gardenId);
 
         if (!garden) {
           return reply.status(404).send({ errorType: 'NOT_FOUND', message: 'Garden not found' });
@@ -80,9 +85,9 @@ export const createGardenRoutes =
         },
       },
       async (request, reply) => {
-        const { body } = request;
+        const { body, userId } = request;
 
-        const result = await gardenConnector.createGarden('userId', body);
+        const result = await gardenConnector.createGarden(userId, body);
 
         return reply.status(201).send(result);
       },
@@ -100,9 +105,9 @@ export const createGardenRoutes =
       },
       async (request, reply) => {
         const { gardenId } = request.params;
-        const { body } = request;
+        const { body, userId } = request;
 
-        const garden = await gardenConnector.updateGarden('userId', gardenId, body);
+        const garden = await gardenConnector.updateGarden(userId, gardenId, body);
 
         if (!garden) {
           return reply.status(404).send({ errorType: 'NOT_FOUND', message: 'Garden not found' });
@@ -127,13 +132,14 @@ export const createGardenRoutes =
         schema: {
           tags: ['Gardens'],
           params: gardenIdParamsSchema,
-          response: { 204: {} },
+          response: { 204: { type: 'null' } },
         },
       },
       async (request, reply) => {
         const { gardenId } = request.params;
+        const { userId } = request;
 
-        await gardenConnector.deleteGarden('userId', gardenId);
+        await gardenConnector.deleteGarden(userId, gardenId);
 
         return reply.status(204).send();
       },

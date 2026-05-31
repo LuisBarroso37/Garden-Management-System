@@ -8,6 +8,7 @@ import {
   createMockPlantConnector,
   createMockPlantMetricConnector,
   createMockIrrigationConnector,
+  authHeaders,
 } from '../setup/setup-mocks.js';
 import { createTestApp } from '../setup/create-test-app.js';
 
@@ -74,6 +75,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -85,6 +87,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId: 'not-a-uuid' },
     });
 
@@ -102,6 +105,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -136,6 +140,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -165,6 +170,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -202,6 +208,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -224,6 +231,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -254,6 +262,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 
@@ -286,6 +295,7 @@ describe('POST /api/irrigation', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/irrigation',
+      headers: authHeaders(),
       payload: { gardenId },
     });
 

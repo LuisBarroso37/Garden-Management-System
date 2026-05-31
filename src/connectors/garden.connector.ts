@@ -91,6 +91,7 @@ export const createGardenConnector = (database: Kysely<DB>) => {
         ...(input.name && { name: input.name }),
         ...(input.totalSurfaceArea && { totalSurfaceArea: input.totalSurfaceArea }),
         ...(input.locationDescription && { locationDescription: input.locationDescription }),
+        ...(input.targetHumidityLevel && { targetHumidityLevel: input.targetHumidityLevel }),
         updatedAt: dayjs.utc().format('YYYY-MM-DDTHH:mm:ss[Z]'),
       })
       .where('id', '=', gardenId)

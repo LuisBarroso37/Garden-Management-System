@@ -9,6 +9,7 @@ import {
   createMockGardenConnector,
   createMockPlantMetricConnector,
   createMockDatabase,
+  authHeaders,
 } from '../setup/setup-mocks.js';
 import { createTestApp } from '../setup/create-test-app.js';
 
@@ -75,6 +76,7 @@ describe('POST /api/gardens/:gardenId/plants', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/gardens/${gardenId}/plants`,
+      headers: authHeaders(),
       payload: validBody,
     });
 
@@ -93,6 +95,7 @@ describe('POST /api/gardens/:gardenId/plants', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/gardens/${gardenId}/plants`,
+      headers: authHeaders(),
       payload: validBody,
     });
 
@@ -126,6 +129,7 @@ describe('POST /api/gardens/:gardenId/plants', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/gardens/${gardenId}/plants`,
+      headers: authHeaders(),
       payload: { ...validBody, surfaceAreaRequired: 2 },
     });
 
@@ -140,6 +144,7 @@ describe('POST /api/gardens/:gardenId/plants', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/gardens/${gardenId}/plants`,
+      headers: authHeaders(),
       payload: { name: 'Tomato' },
     });
 
@@ -150,6 +155,7 @@ describe('POST /api/gardens/:gardenId/plants', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/gardens/not-a-uuid/plants',
+      headers: authHeaders(),
       payload: validBody,
     });
 
@@ -163,6 +169,7 @@ describe('POST /api/gardens/:gardenId/plants', () => {
     await app.inject({
       method: 'POST',
       url: `/api/gardens/${gardenId}/plants`,
+      headers: authHeaders(),
       payload: validBody,
     });
 

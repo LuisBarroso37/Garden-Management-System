@@ -20,14 +20,17 @@ export class PlantNotFoundError extends Error {
 
 export const createPlantConnector = (database: Kysely<DB>) => {
   const getPlant = async (
+    userId: string,
     gardenId: string,
     plantId: string,
   ): Promise<Selectable<Plant> | undefined> => {
     const plant = await database
       .selectFrom('plant')
-      .where('id', '=', plantId)
-      .where('gardenId', '=', gardenId)
-      .selectAll()
+      .innerJoin('garden', 'garden.id', 'plant.gardenId')
+      .where('plant.id', '=', plantId)
+      .where('plant.gardenId', '=', gardenId)
+      .where('garden.userId', '=', userId)
+      .selectAll('plant')
       .executeTakeFirst()
       .catch((error) => {
         throw new Error(`Failed to fetch plant with id [${plantId}] in garden [${gardenId}]`, {
@@ -42,11 +45,13 @@ export const createPlantConnector = (database: Kysely<DB>) => {
     return plant;
   };
 
-  const getPlants = async (gardenId: string): Promise<Selectable<Plant>[]> => {
+  const getPlants = async (userId: string, gardenId: string): Promise<Selectable<Plant>[]> => {
     return database
       .selectFrom('plant')
-      .where('gardenId', '=', gardenId)
-      .selectAll()
+      .innerJoin('garden', 'garden.id', 'plant.gardenId')
+      .where('plant.gardenId', '=', gardenId)
+      .where('garden.userId', '=', userId)
+      .selectAll('plant')
       .execute()
       .catch((error) => {
         throw new Error(`Failed to fetch plants for garden [${gardenId}]`, { cause: error });
@@ -85,6 +90,7 @@ export const createPlantConnector = (database: Kysely<DB>) => {
   };
 
   const updatePlant = async (
+    userId: string,
     gardenId: string,
     plantId: string,
     input: UpdatePlantInput,
@@ -100,8 +106,13 @@ export const createPlantConnector = (database: Kysely<DB>) => {
         ...(input.idealHumidityLevel && { idealHumidityLevel: input.idealHumidityLevel }),
         updatedAt: dayjs.utc().format('YYYY-MM-DDTHH:mm:ss[Z]'),
       })
-      .where('id', '=', plantId)
-      .where('gardenId', '=', gardenId)
+      .where('plant.id', '=', plantId)
+      .where('plant.gardenId', '=', gardenId)
+      .where(
+        'plant.gardenId',
+        'in',
+        database.selectFrom('garden').where('garden.userId', '=', userId).select('garden.id'),
+      )
       .returningAll()
       .executeTakeFirst()
       .catch((error) => {
@@ -117,11 +128,16 @@ export const createPlantConnector = (database: Kysely<DB>) => {
     return updatedPlant;
   };
 
-  const deletePlant = async (gardenId: string, plantId: string): Promise<void> => {
+  const deletePlant = async (userId: string, gardenId: string, plantId: string): Promise<void> => {
     await database
       .deleteFrom('plant')
-      .where('id', '=', plantId)
-      .where('gardenId', '=', gardenId)
+      .where('plant.id', '=', plantId)
+      .where('plant.gardenId', '=', gardenId)
+      .where(
+        'plant.gardenId',
+        'in',
+        database.selectFrom('garden').where('garden.userId', '=', userId).select('garden.id'),
+      )
       .execute()
       .catch((error) => {
         throw new Error(`Failed to delete plant with id [${plantId}] in garden [${gardenId}]`, {
@@ -132,19 +148,19 @@ export const createPlantConnector = (database: Kysely<DB>) => {
 
   return {
     getPlant: z
-      .function({ input: [z.uuid(), z.uuid()], output: plantSchema.optional() })
+      .function({ input: [z.uuid(), z.uuid(), z.uuid()], output: plantSchema.optional() })
       .implementAsync(getPlant),
     getPlants: z
-      .function({ input: [z.uuid()], output: plantSchema.array() })
+      .function({ input: [z.uuid(), z.uuid()], output: plantSchema.array() })
       .implementAsync(getPlants),
     createPlant: z
       .function({ input: [z.uuid(), createPlantSchema], output: createdResultSchema })
       .implementAsync(createPlant),
     updatePlant: z
-      .function({ input: [z.uuid(), z.uuid(), updatePlantSchema], output: plantSchema })
+      .function({ input: [z.uuid(), z.uuid(), z.uuid(), updatePlantSchema], output: plantSchema })
       .implementAsync(updatePlant),
     deletePlant: z
-      .function({ input: [z.uuid(), z.uuid()], output: z.void() })
+      .function({ input: [z.uuid(), z.uuid(), z.uuid()], output: z.void() })
       .implementAsync(deletePlant),
     withTransaction: (trx: Kysely<DB>) => createPlantConnector(trx),
   };

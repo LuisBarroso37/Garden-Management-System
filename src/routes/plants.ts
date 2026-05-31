@@ -18,6 +18,7 @@ import {
 } from '../connectors/plant-metric.connector.js';
 import { INITIAL_HUMIDITY_LEVEL } from '../schemas/irrigation.js';
 import type { DB } from '../db/types.js';
+import { authenticate } from '../utils/auth.js';
 
 export const createPlantRoutes =
   (
@@ -27,6 +28,8 @@ export const createPlantRoutes =
     database: Kysely<DB>,
   ): FastifyPluginAsyncZodOpenApi =>
   async (app) => {
+    app.addHook('onRequest', authenticate);
+
     app.get(
       '/',
       {
@@ -41,8 +44,9 @@ export const createPlantRoutes =
       },
       async (request) => {
         const { gardenId } = request.params;
+        const { userId } = request;
 
-        return plantConnector.getPlants(gardenId);
+        return plantConnector.getPlants(userId, gardenId);
       },
     );
 
@@ -60,8 +64,9 @@ export const createPlantRoutes =
       },
       async (request, reply) => {
         const { gardenId, plantId } = request.params;
+        const { userId } = request;
 
-        const plant = await plantConnector.getPlant(gardenId, plantId);
+        const plant = await plantConnector.getPlant(userId, gardenId, plantId);
 
         if (!plant) {
           return reply.status(404).send({ errorType: 'NOT_FOUND', message: 'Plant not found' });
@@ -87,15 +92,15 @@ export const createPlantRoutes =
       },
       async (request, reply) => {
         const { gardenId } = request.params;
-        const { body } = request;
+        const { body, userId } = request;
 
-        const garden = await gardenConnector.getGarden('userId', gardenId);
+        const garden = await gardenConnector.getGarden(userId, gardenId);
 
         if (!garden) {
           return reply.status(404).send({ errorType: 'NOT_FOUND', message: 'Garden not found' });
         }
 
-        const plants = await plantConnector.getPlants(gardenId);
+        const plants = await plantConnector.getPlants(userId, gardenId);
 
         const plantSurfaceAreas = plants.map((p) => Number(p.surfaceAreaRequired));
         const availableSurfaceArea = getAvailableGardenSurfaceArea(
@@ -136,16 +141,16 @@ export const createPlantRoutes =
       },
       async (request, reply) => {
         const { gardenId, plantId } = request.params;
-        const { body } = request;
+        const { body, userId } = request;
 
         if (body.surfaceAreaRequired) {
-          const garden = await gardenConnector.getGarden('userId', gardenId);
+          const garden = await gardenConnector.getGarden(userId, gardenId);
 
           if (!garden) {
             return reply.status(404).send({ errorType: 'NOT_FOUND', message: 'Garden not found' });
           }
 
-          const plants = await plantConnector.getPlants(gardenId);
+          const plants = await plantConnector.getPlants(userId, gardenId);
 
           const plantSurfaceAreas = plants.map((p) => Number(p.surfaceAreaRequired));
           const availableSurfaceArea = getAvailableGardenSurfaceArea(
@@ -161,7 +166,7 @@ export const createPlantRoutes =
           }
         }
 
-        const plant = await plantConnector.updatePlant(gardenId, plantId, body);
+        const plant = await plantConnector.updatePlant(userId, gardenId, plantId, body);
 
         if (!plant) {
           return reply.status(404).send({ errorType: 'NOT_FOUND', message: 'Plant not found' });
@@ -177,13 +182,14 @@ export const createPlantRoutes =
         schema: {
           tags: ['Plants'],
           params: plantParamsSchema,
-          response: { 204: {} },
+          response: { 204: { type: 'null' } },
         },
       },
       async (request, reply) => {
         const { gardenId, plantId } = request.params;
+        const { userId } = request;
 
-        await plantConnector.deletePlant(gardenId, plantId);
+        await plantConnector.deletePlant(userId, gardenId, plantId);
 
         return reply.status(204).send();
       },

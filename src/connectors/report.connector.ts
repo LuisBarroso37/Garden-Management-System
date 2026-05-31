@@ -1,10 +1,12 @@
 import { Kysely, sql } from 'kysely';
 import { DB } from '../db/types.js';
 import { createKyselyDatabaseClient } from '../db/index.js';
-import { WateringFrequencyRow } from '../schemas/report.js';
+import { wateringFrequencySchema, WateringFrequencyRow } from '../schemas/report.js';
+import { z } from 'zod/v4';
 
 export const createReportConnector = (database: Kysely<DB>) => {
   const getWateringFrequency = async (
+    userId: string,
     gardenId: string,
     from: string,
     to: string,
@@ -12,7 +14,9 @@ export const createReportConnector = (database: Kysely<DB>) => {
     const rows = await database
       .selectFrom('plant_metric')
       .innerJoin('plant', 'plant.id', 'plant_metric.plantId')
+      .innerJoin('garden', 'garden.id', 'plant.gardenId')
       .where('plant.gardenId', '=', gardenId)
+      .where('garden.userId', '=', userId)
       .where('plant_metric.lastIrrigationStartTime', '>=', from)
       .where('plant_metric.lastIrrigationStartTime', '<=', to)
       .select([
@@ -33,11 +37,17 @@ export const createReportConnector = (database: Kysely<DB>) => {
     }));
   };
 
-  const getPlantsAddedCount = async (gardenId: string, since: string): Promise<number> => {
+  const getPlantsAddedCount = async (
+    userId: string,
+    gardenId: string,
+    since: string,
+  ): Promise<number> => {
     const result = await database
       .selectFrom('plant')
-      .where('gardenId', '=', gardenId)
-      .where('createdAt', '>=', since)
+      .innerJoin('garden', 'garden.id', 'plant.gardenId')
+      .where('plant.gardenId', '=', gardenId)
+      .where('garden.userId', '=', userId)
+      .where('plant.createdAt', '>=', since)
       .select((eb) => eb.fn.countAll().as('count'))
       .executeTakeFirstOrThrow()
       .catch((error) => {
@@ -47,10 +57,12 @@ export const createReportConnector = (database: Kysely<DB>) => {
     return Number(result.count);
   };
 
-  const getTotalPlantCount = async (gardenId: string): Promise<number> => {
+  const getTotalPlantCount = async (userId: string, gardenId: string): Promise<number> => {
     const result = await database
       .selectFrom('plant')
-      .where('gardenId', '=', gardenId)
+      .innerJoin('garden', 'garden.id', 'plant.gardenId')
+      .where('plant.gardenId', '=', gardenId)
+      .where('garden.userId', '=', userId)
       .select((eb) => eb.fn.countAll().as('count'))
       .executeTakeFirstOrThrow()
       .catch((error) => {
@@ -61,9 +73,18 @@ export const createReportConnector = (database: Kysely<DB>) => {
   };
 
   return {
-    getWateringFrequency,
-    getPlantsAddedCount,
-    getTotalPlantCount,
+    getWateringFrequency: z
+      .function({
+        input: [z.uuid(), z.uuid(), z.iso.datetime(), z.iso.datetime()],
+        output: wateringFrequencySchema.array(),
+      })
+      .implementAsync(getWateringFrequency),
+    getPlantsAddedCount: z
+      .function({ input: [z.uuid(), z.uuid(), z.iso.datetime()], output: z.number() })
+      .implementAsync(getPlantsAddedCount),
+    getTotalPlantCount: z
+      .function({ input: [z.uuid(), z.uuid()], output: z.number() })
+      .implementAsync(getTotalPlantCount),
   };
 };
 

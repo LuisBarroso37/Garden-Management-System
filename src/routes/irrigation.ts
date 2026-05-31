@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncZodOpenApi } from 'fastify-zod-openapi';
 import { z } from 'zod/v4';
 import { PlantConnector, plantConnector } from '../connectors/plant.connector.js';
 import { irrigationResponseSchema, WATERING_DURATION_MINUTES } from '../schemas/irrigation.js';
+import { authenticate } from '../utils/auth.js';
 import {
   PlantMetricConnector,
   plantMetricConnector,
@@ -103,6 +104,8 @@ export const createIrrigationRoutes =
     irrigationConnector: IrrigationConnector,
   ): FastifyPluginAsyncZodOpenApi =>
   async (app) => {
+    app.addHook('onRequest', authenticate);
+
     app.post(
       '/',
       {
@@ -120,8 +123,9 @@ export const createIrrigationRoutes =
       },
       async (request, reply) => {
         const { gardenId } = request.body;
+        const { userId } = request;
 
-        const plants = await plantConnector.getPlants(gardenId);
+        const plants = await plantConnector.getPlants(userId, gardenId);
 
         if (plants.length === 0) {
           return reply.status(200).send({ processed: 0, failed: [] });

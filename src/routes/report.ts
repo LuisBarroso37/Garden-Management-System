@@ -1,10 +1,13 @@
 import type { FastifyPluginAsyncZodOpenApi } from 'fastify-zod-openapi';
 import { reportQuerySchema, reportResponseSchema } from '../schemas/report.js';
 import { type ReportConnector, reportConnector } from '../connectors/report.connector.js';
+import { authenticate } from '../utils/auth.js';
 
 export const createReportRoutes =
   (reportConnector: ReportConnector): FastifyPluginAsyncZodOpenApi =>
   async (app) => {
+    app.addHook('onRequest', authenticate);
+
     app.get(
       '/',
       {
@@ -18,11 +21,12 @@ export const createReportRoutes =
       },
       async (request, reply) => {
         const { gardenId, from, to } = request.query;
+        const { userId } = request;
 
         const [wateringFrequency, plantsAdded, totalPlants] = await Promise.all([
-          reportConnector.getWateringFrequency(gardenId, from, to),
-          reportConnector.getPlantsAddedCount(gardenId, from),
-          reportConnector.getTotalPlantCount(gardenId),
+          reportConnector.getWateringFrequency(userId, gardenId, from, to),
+          reportConnector.getPlantsAddedCount(userId, gardenId, from),
+          reportConnector.getTotalPlantCount(userId, gardenId),
         ]);
 
         const wateredPlantIds = new Set(wateringFrequency.map((row) => row.plantId));

@@ -21,7 +21,14 @@ describe('PlantConnector', () => {
     await database
       .insertInto('user')
       .values([
-        { id: userId, firstName: 'Test', lastName: 'User', age: 30, email: 'test@example.com' },
+        {
+          id: userId,
+          firstName: 'Test',
+          lastName: 'User',
+          age: 30,
+          email: 'test@example.com',
+          passwordHash: 'hashed',
+        },
       ])
       .execute();
 
@@ -86,7 +93,7 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 60,
       });
 
-      const plant = await plantConnector.getPlant(gardenId1, id);
+      const plant = await plantConnector.getPlant(userId, gardenId1, id);
 
       expect(plant).toStrictEqual({
         id,
@@ -104,6 +111,7 @@ describe('PlantConnector', () => {
 
     it('should return undefined if plant does not exist', async () => {
       const plant = await plantConnector.getPlant(
+        userId,
         gardenId1,
         '00000000-0000-0000-0000-000000000000',
       );
@@ -121,7 +129,7 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 60,
       });
 
-      const plant = await plantConnector.getPlant(gardenId1, id);
+      const plant = await plantConnector.getPlant(userId, gardenId1, id);
 
       expect(plant).toBeUndefined();
     });
@@ -146,7 +154,7 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 80,
       });
 
-      const plants = await plantConnector.getPlants(gardenId1);
+      const plants = await plantConnector.getPlants(userId, gardenId1);
 
       expect(plants).toHaveLength(2);
       expect(plants.map((p) => p.name)).toContain('Plant A');
@@ -154,7 +162,7 @@ describe('PlantConnector', () => {
     });
 
     it('should return empty array if garden has no plants', async () => {
-      const plants = await plantConnector.getPlants(gardenId1);
+      const plants = await plantConnector.getPlants(userId, gardenId1);
 
       expect(plants).toEqual([]);
     });
@@ -169,7 +177,7 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 60,
       });
 
-      const plants = await plantConnector.getPlants(gardenId1);
+      const plants = await plantConnector.getPlants(userId, gardenId1);
 
       expect(plants).toEqual([]);
     });
@@ -186,7 +194,7 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 60,
       });
 
-      const updated = await plantConnector.updatePlant(gardenId1, id, {
+      const updated = await plantConnector.updatePlant(userId, gardenId1, id, {
         name: 'New Name',
       });
 
@@ -197,9 +205,9 @@ describe('PlantConnector', () => {
     it('should throw PlantNotFoundError when plant does not exist', async () => {
       const fakeId = '00000000-0000-0000-0000-000000000000';
 
-      await expect(plantConnector.updatePlant(gardenId1, fakeId, { name: 'Nope' })).rejects.toThrow(
-        PlantNotFoundError,
-      );
+      await expect(
+        plantConnector.updatePlant(userId, gardenId1, fakeId, { name: 'Nope' }),
+      ).rejects.toThrow(PlantNotFoundError);
     });
 
     it('should throw PlantNotFoundError when plant belongs to another garden', async () => {
@@ -212,9 +220,9 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 60,
       });
 
-      await expect(plantConnector.updatePlant(gardenId1, id, { name: 'Stolen' })).rejects.toThrow(
-        PlantNotFoundError,
-      );
+      await expect(
+        plantConnector.updatePlant(userId, gardenId1, id, { name: 'Stolen' }),
+      ).rejects.toThrow(PlantNotFoundError);
     });
   });
 
@@ -229,15 +237,15 @@ describe('PlantConnector', () => {
         idealHumidityLevel: 60,
       });
 
-      await plantConnector.deletePlant(gardenId1, id);
+      await plantConnector.deletePlant(userId, gardenId1, id);
 
-      const plant = await plantConnector.getPlant(gardenId1, id);
+      const plant = await plantConnector.getPlant(userId, gardenId1, id);
       expect(plant).toBeUndefined();
     });
 
     it('should not throw when plant does not exist', async () => {
       await expect(
-        plantConnector.deletePlant(gardenId1, '00000000-0000-0000-0000-000000000000'),
+        plantConnector.deletePlant(userId, gardenId1, '00000000-0000-0000-0000-000000000000'),
       ).resolves.not.toThrow();
     });
   });

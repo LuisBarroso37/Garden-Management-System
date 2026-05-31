@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, type Mocked } fr
 import type { FastifyInstance } from 'fastify';
 import { createReportRoutes } from '../../src/routes/report.js';
 import type { ReportConnector } from '../../src/connectors/report.connector.js';
-import { createMockReportConnector } from '../setup/setup-mocks.js';
+import { createMockReportConnector, authHeaders, TEST_USER_ID } from '../setup/setup-mocks.js';
 import { createTestApp } from '../setup/create-test-app.js';
 
 const gardenId = '550e8400-e29b-41d4-a716-446655440000';
@@ -40,6 +40,7 @@ describe('GET /api/reports', () => {
     const response = await app.inject({
       method: 'GET',
       url: `/api/reports?gardenId=${gardenId}&from=${from}&to=${to}`,
+      headers: authHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
@@ -67,11 +68,17 @@ describe('GET /api/reports', () => {
     const response = await app.inject({
       method: 'GET',
       url: `/api/reports?gardenId=${gardenId}&from=${from}&to=${to}`,
+      headers: authHeaders(),
     });
 
-    expect(reportConnector.getWateringFrequency).toHaveBeenCalledWith(gardenId, from, to);
-    expect(reportConnector.getPlantsAddedCount).toHaveBeenCalledWith(gardenId, from);
-    expect(reportConnector.getTotalPlantCount).toHaveBeenCalledWith(gardenId);
+    expect(reportConnector.getWateringFrequency).toHaveBeenCalledWith(
+      TEST_USER_ID,
+      gardenId,
+      from,
+      to,
+    );
+    expect(reportConnector.getPlantsAddedCount).toHaveBeenCalledWith(TEST_USER_ID, gardenId, from);
+    expect(reportConnector.getTotalPlantCount).toHaveBeenCalledWith(TEST_USER_ID, gardenId);
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
@@ -86,6 +93,7 @@ describe('GET /api/reports', () => {
     const response = await app.inject({
       method: 'GET',
       url: `/api/reports?from=${from}&to=${to}`,
+      headers: authHeaders(),
     });
 
     expect(response.statusCode).toBe(400);
@@ -95,6 +103,7 @@ describe('GET /api/reports', () => {
     const response = await app.inject({
       method: 'GET',
       url: `/api/reports?gardenId=${gardenId}&from=not-a-date&to=${to}`,
+      headers: authHeaders(),
     });
 
     expect(response.statusCode).toBe(400);
@@ -104,6 +113,7 @@ describe('GET /api/reports', () => {
     const response = await app.inject({
       method: 'GET',
       url: `/api/reports?gardenId=${gardenId}&from=${from}`,
+      headers: authHeaders(),
     });
 
     expect(response.statusCode).toBe(400);

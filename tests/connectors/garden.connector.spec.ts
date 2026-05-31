@@ -23,13 +23,21 @@ describe('GardenConnector', () => {
     await database
       .insertInto('user')
       .values([
-        { id: userId, firstName: 'Test', lastName: 'User', age: 30, email: 'test@example.com' },
+        {
+          id: userId,
+          firstName: 'Test',
+          lastName: 'User',
+          age: 30,
+          email: 'test@example.com',
+          passwordHash: 'hashed',
+        },
         {
           id: otherUserId,
           firstName: 'Other',
           lastName: 'User',
           age: 25,
           email: 'other@example.com',
+          passwordHash: 'hashed',
         },
       ])
       .execute();

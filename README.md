@@ -13,6 +13,7 @@ An automated garden management system RESTful API.
 - [Authentication & User Management](#authentication--user-management)
 - [Irrigation System Considerations](#irrigation-system-considerations)
 - [Reporting](#reporting)
+- [Production Deployment (AWS)](#production-deployment-aws)
 
 ---
 
@@ -435,3 +436,103 @@ This scans ~24 rows per plant for a 24h range, instead of potentially millions o
 - **Async report generation** — useful for expensive exports (PDF, CSV) but unnecessary for simple JSON responses
 
 POST /reports kicks off a job and returns a reportId. Client polls GET /reports/:id or gets a webhook/notification when ready. Good for expensive reports (PDF, large date ranges).
+
+---
+
+## Production Deployment (AWS)
+
+A production architecture using **ECS Express Mode** — a single API call provisions a complete application stack (ECS service on Fargate, ALB, auto-scaling, networking) without manual infrastructure configuration:
+
+```
+                    ┌──────────────────┐
+                    │    ALB (HTTPS)   │  (TLS termination, health checks, routing)
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │    ECS Fargate   │  (serverless containers, auto-scaling)
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │    RDS Proxy     │  (connection pooling, IAM auth)
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │   RDS Postgres   │  (Multi-Availability Zone, automated backups)
+                    └──────────────────┘
+```
+
+### Infrastructure
+
+ECS Express Mode provisions the ALB, Fargate cluster, auto-scaling, security groups, and networking automatically. You provide a container image and two IAM roles:
+
+| Component                | AWS Service                    | Purpose                                                                                                        |
+| ------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Compute + networking     | **ECS Express Mode**           | Single API call provisions ALB, Fargate service, auto-scaling, security groups, and HTTPS — no manual setup    |
+| Connection pooling       | **RDS Proxy**                  | Sits between Fargate and RDS, multiplexes connections, prevents connection exhaustion across auto-scaled tasks |
+| Database                 | **RDS PostgreSQL**             | Multi-Availability Zone, automated backups, point-in-time recovery                                             |
+| Secrets                  | **Secrets Manager**            | Store `DATABASE_URL`, `JWT_SECRET`. Injected into task definition as environment variables at runtime          |
+| CI/CD                    | **GitHub Actions → ECR → ECS** | Build image, push to ECR, deploy via `amazon-ecs-deploy-express-service` GitHub Action                         |
+| Irrigation scheduler     | **EventBridge + Lambda**       | Cron rule (e.g., every minute) triggers a Lambda that calls `POST /api/irrigation` for each garden             |
+| Monitoring               | **CloudWatch**                 | Application logs (via awslogs driver), request metrics from ALB, container-level alarms                        |
+| Custom domain (optional) | **Route 53 + ACM**             | DNS routing to ALB with automatic certificate renewal                                                          |
+
+> **Note:** `DATABASE_URL` points to the RDS Proxy endpoint, not the RDS instance directly. RDS Proxy handles connection multiplexing and routes queries to the primary.
+
+For workloads needing fine-grained control (custom routing rules, sidecar containers, service mesh, gRPC), the full ECS Fargate setup with manually configured ALB, target groups, and task definitions remains available — Express Mode resources can be customized after creation.
+
+### Why ECS Express Mode?
+
+AWS deprecated App Runner (closed to new customers) and recommends ECS Express Mode as its replacement. Express Mode provides the same operational simplicity while giving access to the full ECS feature set:
+
+- **Single API call** — provisions ALB, Fargate service, auto-scaling, security groups, and HTTPS endpoint
+- **No additional charge** — pay only for the underlying AWS resources (Fargate tasks, ALB, etc.)
+- **Full ECS access** — we can later customize any provisioned resource (task definitions, scaling policies, networking)
+- **Infrastructure as Code** — can be provisioned via CDK or the AWS CLI for reproducibility and version control
+- **Simpler CI/CD** — dedicated GitHub Action (`amazon-ecs-deploy-express-service`) for automated deployments
+
+### Deployment Pipeline
+
+```
+git push → GitHub Actions → docker build → push to ECR → ECS Express Mode deploys
+```
+
+1. **Build** — Multi-stage Docker build produces a minimal production image (~80MB)
+2. **Push** — Tag with git SHA and `latest`, push to ECR
+3. **Deploy** — `amazon-ecs-deploy-express-service` GitHub Action deploys the new image (rolling deployment, zero downtime)
+4. **Migrate** — Run `npm run migrate` as a one-off ECS task targeting the RDS instance via RDS Proxy
+
+### Environment Variables
+
+Sensitive values are stored in Secrets Manager. ECS Express Mode supports referencing secrets directly:
+
+```json
+{
+  "containerDefinitions": [
+    {
+      "name": "garden-api",
+      "image": "<account_id>.dkr.ecr.<region>.amazonaws.com/garden-api:latest",
+      "portMappings": [{ "containerPort": 3000 }],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<region>:<account_id>:secret:garden-db-url"
+        },
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:<region>:<account_id>:secret:garden-jwt-secret"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "3000" }
+      ]
+    }
+  ]
+}
+```
+
+### Scaling Considerations
+
+- **Horizontal scaling**: ECS auto-scaling based on ALB request count, CPU, or memory utilization. Configure min/max tasks to control cost vs. availability
+- **Database**: Scale vertically as needed. Add read replicas for report queries if necessary
+- **Connection pooling**: RDS Proxy sits between Fargate tasks and RDS, multiplexing connections and preventing exhaustion as tasks auto-scale

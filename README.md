@@ -10,6 +10,7 @@ An automated garden management system RESTful API.
 - [Testing](#testing)
 - [Considerations](#considerations)
 - [Performance Optimization](#performance-optimization)
+- [Authentication & User Management](#authentication--user-management)
 - [Irrigation System Considerations](#irrigation-system-considerations)
 - [Reporting](#reporting)
 
@@ -141,6 +142,9 @@ npm run test
 - I am assuming that gardens are owned by a single user; if is not the case, a join table could be added to support shared access. The spec doesn't explicitly specify this.
 - I did not add pagination since a user will normally not have a lot of gardens or plants. Could easily be added in the future.
 - We could add linting rules to make sure that certain folders could import only from a defined set of folders.
+- **No rate limiting on auth endpoints** — login and register are vulnerable to brute force without per-IP rate limiting. In production, `fastify-rate-limit` (or an API gateway throttle) would cap attempts per IP/window.
+- **No email verification** — registration accepts any email string without confirming ownership. A production flow would store a verification token (hashed) with an expiry, send a link via SES/SMTP, and only activate the account once the token is confirmed. Cognito or Better Auth handle this out of the box.
+- **Hard deletes lose historical data** — deleting a plant removes its metrics, so reports for past periods lose accuracy. A soft-delete (`deletedAt` column) would preserve historical data while hiding the plant from active queries.
 
 ## Performance Optimization
 
@@ -206,6 +210,79 @@ The application is stateless (no in-memory sessions, no local file state), so it
 
 - Multiple app instances behind a load balancer, each connecting to the same database through a connection pool
 - Auto-scaling based on CPU/memory or request latency
+
+## Authentication & User Management
+
+### Implemented: JWT + Refresh Token Rotation
+
+I implemented a self-managed auth system using short-lived access tokens (15 min) + database-backed refresh tokens with rotation:
+
+- **Register** (`POST /api/auth/register`) — bcrypt password hashing (12 rounds), returns tokens
+- **Login** (`POST /api/auth/login`) — verifies credentials, issues token pair
+- **Refresh** (`POST /api/auth/refresh`) — rotates refresh token (old one revoked, new pair issued)
+- **Logout** (`POST /api/auth/logout`) — revokes refresh token
+- **Delete account** (`DELETE /api/auth/account`) — deletes all user data via cascading FK constraints
+- **Get profile** (`GET /api/auth/me`) — protected route using `authenticate` middleware
+
+**Why this approach:**
+
+- Access tokens are stateless — no DB lookup on most requests, just signature verification
+- Refresh tokens are stored with a hash (SHA-256) in the database — revocable on logout/deletion
+- Token rotation means a stolen refresh token becomes invalid once the legitimate user refreshes
+- No Redis or external session store required — the database we already have is sufficient
+
+### Token Revocation
+
+Since JWTs can't be revoked before expiry, the trade-off is:
+
+- **Worst case**: a revoked user retains access for ≤15 min (access token TTL)
+- **Mitigation**: short TTL + refresh token rotation keeps the window small
+
+For stricter requirements (instant revocation), a Redis blocklist keyed by token `jti` with TTL matching remaining token lifetime would provide O(1) per-request revocation checks.
+
+Or we could use database sessions to have full control when revoking tokens.
+
+### Authorization
+
+Resource-based — every query filters by `userId` from the JWT `sub` claim. No role system needed; ownership is the authorization rule.
+
+**Data isolation strategy — JOIN through ownership chain:**
+
+Every read/write query on `plant` and `plant_metric` joins back to the `garden` table and filters by `garden.userId`. This guarantees data isolation at the database layer regardless of what the calling code passes as `gardenId`:
+
+```sql
+SELECT plant.* FROM plant
+  INNER JOIN garden ON garden.id = plant."gardenId"
+  WHERE plant."gardenId" = $1 AND garden."userId" = $2
+```
+
+**Alternative considered — denormalized `userId` column on every table:**
+
+Adding a `userId` column directly to `plant`, `plant_metric`, etc. enables simple `WHERE userId = ?` without joins and is common in multi-tenant SaaS (often combined with Postgres RLS or partition-by-tenant). I rejected it because:
+
+- The FK chain already exists (`user → garden → plant → plant_metric`), so the join is on indexed primary keys (negligible cost)
+- Denormalization introduces sync risk — if gardens could be transferred between users, every child row would need updating
+- `plant_metric` is append-only (written every irrigation tick); adding a `userId` column to every row is wasted storage for a column only read during auth checks
+- The JOIN approach naturally supports **shared gardens** in the future — a `garden_member` join table would slot in without schema changes to child tables
+
+If the system needed table partitioning by tenant or Postgres RLS policies, the denormalized column `userId` on every table would be the right choice.
+
+### Production Recommendation
+
+For a production system on AWS, **AWS Cognito** would replace the self-managed auth:
+
+- Handles registration, email verification, OAuth (Google/Apple/GitHub), MFA, and token management
+- JWT validation via cached JWKS — no Cognito calls on each request
+- Integrates with the AWS infrastructure already proposed for the irrigation system
+
+**Alternatives:** Better Auth (self-hosted, TypeScript-first, full data ownership), Auth0 (enterprise features, SAML/SCIM), Clerk (pre-built UI components, excellent DX).
+
+| Criteria           | Cognito                  | Better Auth       | Auth0  | Clerk   |
+| ------------------ | ------------------------ | ----------------- | ------ | ------- |
+| Hosting            | AWS-managed              | Self-hosted       | SaaS   | SaaS    |
+| Free tier          | 50k MAU                  | Unlimited         | 7k MAU | 10k MAU |
+| Vendor lock-in     | Moderate                 | None              | High   | High    |
+| Instant revocation | Refresh token revocation | Yes (DB sessions) | Yes    | Yes     |
 
 ## Irrigation System Considerations
 

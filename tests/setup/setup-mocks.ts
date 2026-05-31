@@ -4,8 +4,16 @@ import type { GardenConnector } from '../../src/connectors/garden.connector.js';
 import type { PlantMetricConnector } from '../../src/connectors/plant-metric.connector.js';
 import type { IrrigationConnector } from '../../src/connectors/irrigation.connector.js';
 import type { ReportConnector } from '../../src/connectors/report.connector.js';
+import type { AuthConnector } from '../../src/connectors/auth.connector.js';
 import type { Kysely } from 'kysely';
 import type { DB } from '../../src/db/types.js';
+import { signAccessToken } from '../../src/utils/auth.js';
+
+export const TEST_USER_ID = '770e8400-e29b-41d4-a716-446655440000';
+
+export const authHeaders = () => ({
+  authorization: `Bearer ${signAccessToken(TEST_USER_ID)}`,
+});
 
 export const createMockPlantConnector = (): Mocked<PlantConnector> => ({
   getPlant: vi.fn<PlantConnector['getPlant']>(),
@@ -45,4 +53,15 @@ export const createMockReportConnector = (): Mocked<ReportConnector> => ({
   getWateringFrequency: vi.fn<ReportConnector['getWateringFrequency']>(),
   getPlantsAddedCount: vi.fn<ReportConnector['getPlantsAddedCount']>(),
   getTotalPlantCount: vi.fn<ReportConnector['getTotalPlantCount']>(),
+});
+
+export const createMockAuthConnector = (): Mocked<AuthConnector> => ({
+  register: vi.fn<AuthConnector['register']>(),
+  verifyCredentials: vi.fn<AuthConnector['verifyCredentials']>(),
+  storeRefreshToken: vi.fn<AuthConnector['storeRefreshToken']>(),
+  verifyRefreshToken: vi.fn<AuthConnector['verifyRefreshToken']>(),
+  revokeRefreshToken: vi.fn<AuthConnector['revokeRefreshToken']>(),
+  revokeAllUserTokens: vi.fn<AuthConnector['revokeAllUserTokens']>(),
+  deleteUser: vi.fn<AuthConnector['deleteUser']>(),
+  getUserById: vi.fn<AuthConnector['getUserById']>(),
 });

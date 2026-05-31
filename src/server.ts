@@ -1,11 +1,9 @@
 import 'dotenv/config';
 import closeWithGrace from 'close-with-grace';
 import { buildApp } from './app.js';
-import { loadConfig } from './config.js';
+import { config } from './config.js';
 
 const startServer = async () => {
-  const config = loadConfig();
-
   const app = await buildApp(config);
 
   closeWithGrace({ delay: 5000 }, async ({ signal, err }) => {

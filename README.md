@@ -144,7 +144,7 @@ npm run test
 - We could add linting rules to make sure that certain folders could import only from a defined set of folders.
 - **No rate limiting on auth endpoints** — login and register are vulnerable to brute force without per-IP rate limiting. In production, `fastify-rate-limit` (or an API gateway throttle) would cap attempts per IP/window.
 - **No email verification** — registration accepts any email string without confirming ownership. A production flow would store a verification token (hashed) with an expiry, send a link via SES/SMTP, and only activate the account once the token is confirmed. Cognito or Better Auth handle this out of the box.
-- **Hard deletes lose historical data** — deleting a plant removes its metrics, so reports for past periods lose accuracy. A soft-delete (`deletedAt` column) would preserve historical data while hiding the plant from active queries.
+- **Soft deletes on plants** — plants use a `deletedAt` column instead of hard deletes. This preserves historical metrics for accurate reporting while hiding deleted plants from active queries (surface area calculations, irrigation ticks, plant listings).
 
 ## Performance Optimization
 
@@ -362,7 +362,7 @@ Tick Lambda
 | Plants added       | Count plants with `createdAt >= from`                                                            |
 
 This is simple, correct, and fast enough at low volume. The queries hit indexed columns (`gardenId`, `plantId`, `createdAt`, `lastIrrigationStartTime`).
-The current system cannot count the deleted plants at the moment. That would require us to "archive" a plant instead to keep the records in the database.
+Plants use soft deletes (`deletedAt` column), so the report can count plants deleted within the period.
 
 ### Possible Approach: Pre-Aggregated Summaries
 

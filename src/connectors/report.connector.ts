@@ -63,10 +63,32 @@ export const createReportConnector = (database: Kysely<DB>) => {
       .innerJoin('garden', 'garden.id', 'plant.gardenId')
       .where('plant.gardenId', '=', gardenId)
       .where('garden.userId', '=', userId)
+      .where('plant.deletedAt', 'is', null)
       .select((eb) => eb.fn.countAll().as('count'))
       .executeTakeFirstOrThrow()
       .catch((error) => {
         throw new Error('Failed to fetch total plant count', { cause: error });
+      });
+
+    return Number(result.count);
+  };
+
+  const getPlantsDeletedCount = async (
+    userId: string,
+    gardenId: string,
+    since: string,
+  ): Promise<number> => {
+    const result = await database
+      .selectFrom('plant')
+      .innerJoin('garden', 'garden.id', 'plant.gardenId')
+      .where('plant.gardenId', '=', gardenId)
+      .where('garden.userId', '=', userId)
+      .where('plant.deletedAt', 'is not', null)
+      .where('plant.deletedAt', '>=', since)
+      .select((eb) => eb.fn.countAll().as('count'))
+      .executeTakeFirstOrThrow()
+      .catch((error) => {
+        throw new Error('Failed to fetch plants deleted count', { cause: error });
       });
 
     return Number(result.count);
@@ -85,6 +107,9 @@ export const createReportConnector = (database: Kysely<DB>) => {
     getTotalPlantCount: z
       .function({ input: [z.uuid(), z.uuid()], output: z.number() })
       .implementAsync(getTotalPlantCount),
+    getPlantsDeletedCount: z
+      .function({ input: [z.uuid(), z.uuid(), z.iso.datetime()], output: z.number() })
+      .implementAsync(getPlantsDeletedCount),
   };
 };
 

@@ -23,10 +23,11 @@ export const createReportRoutes =
         const { gardenId, from, to } = request.query;
         const { userId } = request;
 
-        const [wateringFrequency, plantsAdded, totalPlants] = await Promise.all([
+        const [wateringFrequency, plantsAdded, totalPlants, plantsDeleted] = await Promise.all([
           reportConnector.getWateringFrequency(userId, gardenId, from, to),
           reportConnector.getPlantsAddedCount(userId, gardenId, from),
           reportConnector.getTotalPlantCount(userId, gardenId),
+          reportConnector.getPlantsDeletedCount(userId, gardenId, from),
         ]);
 
         const wateredPlantIds = new Set(wateringFrequency.map((row) => row.plantId));
@@ -40,7 +41,7 @@ export const createReportRoutes =
           unwateredPlants,
           wateringFrequency,
           plantsAdded,
-          plantsDeleted: 0,
+          plantsDeleted,
         });
       },
     );

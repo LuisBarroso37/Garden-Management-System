@@ -53,6 +53,7 @@ export const createMockReportConnector = (): Mocked<ReportConnector> => ({
   getWateringFrequency: vi.fn<ReportConnector['getWateringFrequency']>(),
   getPlantsAddedCount: vi.fn<ReportConnector['getPlantsAddedCount']>(),
   getTotalPlantCount: vi.fn<ReportConnector['getTotalPlantCount']>(),
+  getPlantsDeletedCount: vi.fn<ReportConnector['getPlantsDeletedCount']>(),
 });
 
 export const createMockAuthConnector = (): Mocked<AuthConnector> => ({

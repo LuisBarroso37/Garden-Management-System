@@ -227,7 +227,7 @@ describe('PlantConnector', () => {
   });
 
   describe('deletePlant', () => {
-    it('should delete an existing plant', async () => {
+    it('should soft-delete a plant (not returned by queries but still in DB)', async () => {
       const { id } = await plantConnector.createPlant(gardenId1, {
         name: 'To Delete',
         species: 'Solanum lycopersicum',
@@ -241,6 +241,14 @@ describe('PlantConnector', () => {
 
       const plant = await plantConnector.getPlant(userId, gardenId1, id);
       expect(plant).toBeUndefined();
+
+      const row = await database
+        .selectFrom('plant')
+        .where('id', '=', id)
+        .selectAll()
+        .executeTakeFirst();
+      expect(row).toBeDefined();
+      expect(row!.deletedAt).not.toBeNull();
     });
 
     it('should not throw when plant does not exist', async () => {

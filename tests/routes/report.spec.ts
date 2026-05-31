@@ -28,6 +28,7 @@ describe('GET /api/reports', () => {
     reportConnector.getWateringFrequency.mockReset().mockResolvedValue([]);
     reportConnector.getPlantsAddedCount.mockReset().mockResolvedValue(0);
     reportConnector.getTotalPlantCount.mockReset().mockResolvedValue(0);
+    reportConnector.getPlantsDeletedCount.mockReset().mockResolvedValue(0);
   });
 
   afterAll(async () => {

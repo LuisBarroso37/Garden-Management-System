@@ -30,6 +30,7 @@ export const createPlantConnector = (database: Kysely<DB>) => {
       .where('plant.id', '=', plantId)
       .where('plant.gardenId', '=', gardenId)
       .where('garden.userId', '=', userId)
+      .where('plant.deletedAt', 'is', null)
       .selectAll('plant')
       .executeTakeFirst()
       .catch((error) => {
@@ -51,6 +52,7 @@ export const createPlantConnector = (database: Kysely<DB>) => {
       .innerJoin('garden', 'garden.id', 'plant.gardenId')
       .where('plant.gardenId', '=', gardenId)
       .where('garden.userId', '=', userId)
+      .where('plant.deletedAt', 'is', null)
       .selectAll('plant')
       .execute()
       .catch((error) => {
@@ -108,6 +110,7 @@ export const createPlantConnector = (database: Kysely<DB>) => {
       })
       .where('plant.id', '=', plantId)
       .where('plant.gardenId', '=', gardenId)
+      .where('plant.deletedAt', 'is', null)
       .where(
         'plant.gardenId',
         'in',
@@ -130,9 +133,11 @@ export const createPlantConnector = (database: Kysely<DB>) => {
 
   const deletePlant = async (userId: string, gardenId: string, plantId: string): Promise<void> => {
     await database
-      .deleteFrom('plant')
+      .updateTable('plant')
+      .set({ deletedAt: dayjs.utc().format('YYYY-MM-DDTHH:mm:ss[Z]') })
       .where('plant.id', '=', plantId)
       .where('plant.gardenId', '=', gardenId)
+      .where('plant.deletedAt', 'is', null)
       .where(
         'plant.gardenId',
         'in',

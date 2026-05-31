@@ -3,15 +3,16 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from "kysely";
+import type { ColumnType } from 'kysely';
 
-export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
-  ? ColumnType<S, I | undefined, U>
-  : ColumnType<T, T | undefined, T>;
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U>
+    ? ColumnType<S, I | undefined, U>
+    : ColumnType<T, T | undefined, T>;
 
 export type Numeric = ColumnType<number, number | string, number | string>;
 
-export type PlantType = "flower" | "fruit" | "vegetable";
+export type PlantType = 'flower' | 'fruit' | 'vegetable';
 
 export interface Garden {
   createdAt: Generated<string>;
@@ -26,6 +27,7 @@ export interface Garden {
 
 export interface Plant {
   createdAt: Generated<string>;
+  deletedAt: string | null;
   gardenId: string;
   id: Generated<string>;
   idealHumidityLevel: number;

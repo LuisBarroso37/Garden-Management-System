@@ -1,15 +1,15 @@
 import { Kysely, Selectable } from 'kysely';
-import { DB, Plant } from '../db/types';
+import { DB, Plant } from '../db/types.js';
 import { z } from 'zod/v4';
-import { createKyselyDatabaseClient } from '../db';
+import { createKyselyDatabaseClient } from '../db/index.js';
 import {
   CreatePlantInput,
   createPlantSchema,
   plantSchema,
   UpdatePlantInput,
   updatePlantSchema,
-} from '../schemas/plants';
-import { CreatedResult, createdResultSchema } from '../schemas/created-result';
+} from '../schemas/plants.js';
+import { CreatedResult, createdResultSchema } from '../schemas/created-result.js';
 import { dayjs } from '../utils/dayjs.js';
 
 export class PlantNotFoundError extends Error {

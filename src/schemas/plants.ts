@@ -1,5 +1,5 @@
 import { z } from 'zod/v4';
-import { gardenIdParamsSchema } from './gardens';
+import { gardenIdParamsSchema } from './gardens.js';
 
 const plantTypeSchema = z.enum(['flower', 'fruit', 'vegetable']);
 

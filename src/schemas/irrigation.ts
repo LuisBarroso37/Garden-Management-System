@@ -1,5 +1,5 @@
 import { z } from 'zod/v4';
-import { PlantType } from '../db/types';
+import { PlantType } from '../db/types.js';
 
 export const HUMIDITY_DROP_PER_MINUTE: Record<PlantType, number> = {
   vegetable: 1,

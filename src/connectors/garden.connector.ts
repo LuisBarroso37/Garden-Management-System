@@ -1,16 +1,16 @@
 import { Kysely, Selectable } from 'kysely';
-import { DB, Garden } from '../db/types';
+import { DB, Garden } from '../db/types.js';
 import {
   connectorGardenSchema,
   CreateGardenInput,
   createGardenSchema,
   UpdateGardenInput,
   updateGardenSchema,
-} from '../schemas/gardens';
+} from '../schemas/gardens.js';
 import { z } from 'zod/v4';
-import { createKyselyDatabaseClient } from '../db';
+import { createKyselyDatabaseClient } from '../db/index.js';
 import { dayjs } from '../utils/dayjs.js';
-import { CreatedResult, createdResultSchema } from '../schemas/created-result';
+import { CreatedResult, createdResultSchema } from '../schemas/created-result.js';
 
 export class GardenNotFoundError extends Error {
   constructor(userId: string, gardenId: string, cause?: ErrorOptions) {

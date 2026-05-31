@@ -29,7 +29,7 @@ export const createKyselyDatabaseClient = (): Kysely<DB> => {
   const dialect = new PostgresDialect({
     pool: new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: true,
+      ...(process.env.DATABASE_SSL === 'true' && { ssl: { rejectUnauthorized: false } }),
     }),
   });
 

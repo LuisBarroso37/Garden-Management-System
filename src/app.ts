@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import fastifySwagger from '@fastify/swagger';
 import fastifyCors from '@fastify/cors';
 import fastifyHelmet from '@fastify/helmet';
+import fastifyEtag from '@fastify/etag';
 import {
   fastifyZodOpenApiPlugin,
   fastifyZodOpenApiTransformers,
@@ -37,6 +38,8 @@ export async function buildApp(config: Config) {
   await app.register(fastifyCors, {
     origin: config.CORS_ORIGIN === '*' ? true : config.CORS_ORIGIN.split(','),
   });
+
+  await app.register(fastifyEtag);
 
   await app.register(fastifySwagger, {
     openapi: {

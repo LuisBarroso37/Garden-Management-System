@@ -1,14 +1,14 @@
 import { Kysely, Selectable } from 'kysely';
-import { DB, PlantMetric } from '../db/types';
+import { DB, PlantMetric } from '../db/types.js';
 import { z } from 'zod/v4';
-import { createKyselyDatabaseClient } from '../db';
-import { CreatedResult, createdResultSchema } from '../schemas/created-result';
+import { createKyselyDatabaseClient } from '../db/index.js';
+import { CreatedResult, createdResultSchema } from '../schemas/created-result.js';
 import { dayjs } from '../utils/dayjs.js';
 import {
   connectorPlantMetricSchema,
   CreatePlantMetricInput,
   createPlantMetricSchema,
-} from '../schemas/plant-metrics';
+} from '../schemas/plant-metrics.js';
 
 export const createPlantMetricConnector = (database: Kysely<DB>) => {
   const getLatestPlantMetricsForIds = async (

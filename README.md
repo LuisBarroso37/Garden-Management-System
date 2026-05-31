@@ -9,7 +9,9 @@ An automated garden management system RESTful API.
 - [Getting Started](#getting-started)
 - [Testing](#testing)
 - [Considerations](#considerations)
+- [Performance Optimization](#performance-optimization)
 - [Irrigation System Considerations](#irrigation-system-considerations)
+- [Reporting](#reporting)
 
 ---
 
@@ -140,6 +142,71 @@ npm run test
 - I did not add pagination since a user will normally not have a lot of gardens or plants. Could easily be added in the future.
 - We could add linting rules to make sure that certain folders could import only from a defined set of folders.
 
+## Performance Optimization
+
+Strategies to optimize response times of frequently used API calls in production:
+
+### Database Query Optimization
+
+Before adding caching layers, ensure the database itself is performing well:
+
+- Use `EXPLAIN ANALYZE` to identify slow queries and verify index usage
+- Add composite indexes that match actual query patterns — e.g., `(gardenId, createdAt)` for the plants-added query, `(plantId, lastIrrigationStartTime)` for watering frequency
+- Consider partial indexes for hot paths — e.g., `WHERE lastIrrigationStartTime IS NOT NULL` to skip rows that are never relevant
+- Monitor for sequential scans on large tables and address with targeted indexes
+
+This is often the highest-ROI optimization — a missing index can make a query much slower, which no amount of caching will fully hide.
+
+### HTTP Caching + CDN
+
+The highest-impact, lowest-effort optimization. Most endpoints serve data that changes infrequently:
+
+- `Cache-Control: max-age=<max age>` on garden/plant list endpoints — data rarely changes between requests
+- `ETag` / `If-None-Match` for conditional requests — returns `304 Not Modified` with no body if data hasn't changed
+- Reports: `Cache-Control: max-age=300` since data is only as fresh as the aggregation job interval
+
+At the infrastructure level, a CDN or reverse proxy (CloudFront, Nginx) serves cached responses without hitting the application server at all.
+
+### Application-Level Caching (Redis)
+
+Useful when HTTP caching isn't sufficient (internal service-to-service calls, personalized data):
+
+- Cache garden and plant lists keyed by `gardenId`, invalidate on write (create/update/delete)
+- Cache report responses keyed by `gardenId:from:to`, TTL matching the aggregation interval
+- Pattern: check cache → hit = return immediately, miss = query DB → store in cache → return
+
+### Database Connection Pooling (PgBouncer) (RDS Proxy on AWS).
+
+Node's `pg` pool is per-process. In production with multiple app instances behind a load balancer, connections multiply fast and can exhaust PostgreSQL's `max_connections`.
+
+- PgBouncer sits between the app and Postgres, multiplexing connections
+- Transaction-mode pooling handles most use cases
+- Reduces connection setup overhead and allows more app instances without increasing DB load
+
+### Read Replicas
+
+- Route all GET queries to a read replica, writes to the primary
+- Kysely supports this via separate database instances per connector
+- Especially valuable for the report queries which scan more data
+
+### Response Compression
+
+- Fastify's `@fastify/compress` — gzip/brotli responses, reducing payload size 60-80% for JSON
+- Nginx, for example, can also do response compression as showed in the `nginx.conf` file
+
+### Disable Response Validation in Production
+
+`fastify-zod-openapi` validates every field of every object in the response through Zod. For list endpoints returning hundreds of items, this adds measurable CPU overhead on data we already control.
+
+Fastify's built-in serializer (`fast-json-stringify`) is significantly faster — it generates a stringifier from the JSON Schema at startup and skips validation entirely, only shaping the output. Since the Zod schemas are already converted to JSON Schema for OpenAPI generation, we can use that JSON Schema for serialization while disabling the Zod runtime check on responses. Input validation remains — we never trust external data.
+
+### Horizontal Scaling
+
+The application is stateless (no in-memory sessions, no local file state), so it scales horizontally behind a load balancer:
+
+- Multiple app instances behind a load balancer, each connecting to the same database through a connection pool
+- Auto-scaling based on CPU/memory or request latency
+
 ## Irrigation System Considerations
 
 ### Problem Statement
@@ -161,7 +228,7 @@ A scheduler must evaluate every plant's humidity state every minute, send irriga
 
 ### Architecture Options
 
-I wrote a POST handler to showcase the logic and how it would work but we are, of course, missing other infrastructure. I mocked the irrigation system where we would send commands to. The commands include the duration that water should be given to the plant in case the hardware is capable of taking it into account and closing the water valve after the duration has elaped. This would be the best option and then we would not need to send STOP commands to the hardware.
+I wrote a POST handler to showcase the logic and how it would work but we are, of course, missing other infrastructure. I mocked the irrigation system where we would send commands to. The commands include the duration that water should be given to the plant in case the hardware is capable of taking it into account and closing the water valve after the duration has elapsed. This would be the best option and then we would not need to send STOP commands to the hardware.
 
 A good solution in production based on my experience would be something like this:
 

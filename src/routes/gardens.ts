@@ -20,7 +20,7 @@ export const createGardenRoutes =
           response: { 200: gardenSchema.array() },
         },
       },
-      async (_request) => {
+      async () => {
         const gardens = await gardenConnector.getGardens('userId');
 
         return gardens.map((garden) => ({

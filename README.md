@@ -135,12 +135,13 @@ npm run test
 ### Strategy
 
 - **Unit tests** — pure utility functions (`src/utils/irrigation.ts`) tested in isolation without mocks
+- **Connector tests** — integration tests against a real PostgreSQL instance (Testcontainers), verifying queries, data isolation, and error handling without mocks
 - **Route tests** — mock connectors injected via factory functions, validated with `Mocked<T>` for full type safety
 - **Test helpers** — `createTestApp` builds a Fastify instance with validation/serialization wired up; `createMockConnector` factories provide typed mocks
 
 ## Considerations
 
-- I am assuming that gardens are owned by a single user; if is not the case, a join table could be added to support shared access. The spec doesn't explicitly specify this.
+- I am assuming that gardens are owned by a single user; if this is not the case, a join table could be added to support shared access. The spec doesn't explicitly specify this.
 - I did not add pagination since a user will normally not have a lot of gardens or plants. Could easily be added in the future.
 - We could add linting rules to make sure that certain folders could import only from a defined set of folders.
 - **No rate limiting on auth endpoints** — login and register are vulnerable to brute force without per-IP rate limiting. In production, `fastify-rate-limit` (or an API gateway throttle) would cap attempts per IP/window.
@@ -180,11 +181,11 @@ Useful when HTTP caching isn't sufficient (internal service-to-service calls, pe
 - Cache report responses keyed by `gardenId:from:to`, TTL matching the aggregation interval
 - Pattern: check cache → hit = return immediately, miss = query DB → store in cache → return
 
-### Database Connection Pooling (PgBouncer) (RDS Proxy on AWS).
+### Database Connection Pooling (PgBouncer or RDS Proxy on AWS).
 
 Node's `pg` pool is per-process. In production with multiple app instances behind a load balancer, connections multiply fast and can exhaust PostgreSQL's `max_connections`.
 
-- PgBouncer sits between the app and Postgres, multiplexing connections
+- Database connection pool sits between the app and Postgres, multiplexing connections
 - Transaction-mode pooling handles most use cases
 - Reduces connection setup overhead and allows more app instances without increasing DB load
 
@@ -353,14 +354,15 @@ Tick Lambda
 
 ### Current Implementation
 
-`GET /api/reports?gardenId=...&from=...&to=...` runs three queries in parallel (`Promise.all`) and assembles the response:
+`GET /api/reports?gardenId=...&from=...&to=...` runs four queries in parallel (`Promise.all`) and assembles the response:
 
 | Metric             | Query                                                                                            |
 | ------------------ | ------------------------------------------------------------------------------------------------ |
-| Watered plants     | Count distinct plants that received irrigation (had a `lastIrrigationStartTime`) in the period   |
+| Watered plants     | Derived from watering frequency — count distinct plants that received irrigation in the period   |
 | Unwatered plants   | Total plants minus watered plants (includes plants that stayed healthy and didn't need watering) |
 | Watering frequency | Group by plant, count distinct irrigation start times                                            |
 | Plants added       | Count plants with `createdAt >= from`                                                            |
+| Plants deleted     | Count plants with `deletedAt >= from`                                                            |
 
 This is simple, correct, and fast enough at low volume. The queries hit indexed columns (`gardenId`, `plantId`, `createdAt`, `lastIrrigationStartTime`).
 Plants use soft deletes (`deletedAt` column), so the report can count plants deleted within the period.
@@ -410,7 +412,7 @@ CREATE TABLE garden_daily_summary (
 );
 ```
 
-The job upserts rows during the same hour (`INSERT ... ON CONFLICT UPDATE`) so it's idempotent — safe to re-run if it fails mid-execution. In this example, data is at most 5 minutes stale and the smallest queryable unit is 1 hour.
+The job upserts rows during the same hour or day (`INSERT ... ON CONFLICT UPDATE`) so it's idempotent — safe to re-run if it fails mid-execution. In this example, data is at most 5 minutes stale and the smallest queryable unit is 1 hour for watering data and 1 day for plant events.
 
 The report endpoint then becomes a simple range query over the summary:
 

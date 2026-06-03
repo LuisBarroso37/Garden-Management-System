@@ -13,6 +13,7 @@ An automated garden management system RESTful API.
 - [Authentication & User Management](#authentication--user-management)
 - [Irrigation System Considerations](#irrigation-system-considerations)
 - [Reporting](#reporting)
+- [Observability & Monitoring](#observability--monitoring)
 - [Production Deployment (AWS)](#production-deployment-aws)
 
 ---
@@ -441,100 +442,193 @@ POST /reports kicks off a job and returns a reportId. Client polls GET /reports/
 
 ---
 
+## Observability & Monitoring
+
+### Approach: OpenTelemetry
+
+The instrumentation uses **OpenTelemetry** (CNCF standard) rather than vendor-specific SDKs. This gives us:
+
+- **Vendor neutrality** — instrument once, export to any backend (Datadog, Grafana Cloud, AWS X-Ray, Jaeger) via config change
+- **Three pillars correlated** — traces, metrics, and logs share a `traceId`, so you can jump from a slow request metric → to its trace → to the relevant log lines
+- **Auto-instrumentation** — `@opentelemetry/auto-instrumentations-node` hooks into Fastify, `pg`, and outbound HTTP with zero manual span code
+
+### Development
+
+The local observability stack runs entirely via `docker-compose.yml`:
+
+```
+App → OTLP → OTel Collector → Jaeger  (traces at localhost:16686)
+                             → Prometheus (metrics at localhost:9090)
+```
+
+| Service        | Image                                         | Port  | Purpose                             |
+| -------------- | --------------------------------------------- | ----- | ----------------------------------- |
+| OTel Collector | `otel/opentelemetry-collector-contrib:latest` | 4318  | Receives OTLP, fans out to backends |
+| Jaeger         | `jaegertracing/all-in-one:latest`             | 16686 | Trace visualization                 |
+| Prometheus     | `prom/prometheus:latest`                      | 9090  | Metric storage and querying         |
+
+The OTel Collector and Prometheus configs are inlined directly in `docker-compose.yml` using the top-level `configs` key — no separate files to manage. They are **dev-only** — static targets, no auth, no TLS, no retention policies, and single-instance mode. They exist to validate that instrumentation works locally before deploying to a managed backend in production.
+
+**Useful PromQL queries** (at `http://localhost:9090`):
+
+```promql
+# Request rate per route
+rate(http_server_duration_milliseconds_count[1m])
+
+# Average response time
+rate(http_server_duration_milliseconds_sum[5m]) / rate(http_server_duration_milliseconds_count[5m])
+
+# Event loop saturation
+nodejs_eventloop_utilization_ratio
+```
+
+Fastify's built-in Pino logger already provides structured JSON logs with request IDs. Adding `traceId` to the log context (via OTel log instrumentation) correlates logs to traces.
+
+**Response logging:** Fastify's Pino integration logs response status code and response time for every request automatically (`responseTime`, `statusCode`). This is sufficient for production alerting and debugging — no custom `onResponse` hook needed. Combined with the mutation request body logged in `preHandler`, every write operation has full input + outcome context in the logs.
+
+### Metrics
+
+The SDK uses a `PeriodicExportingMetricReader` that batches and pushes metrics to the OTLP endpoint every 15 seconds. This is a push-based model — the app pushes metrics to the backend (Datadog, Grafana Cloud, or OTel Collector), rather than exposing a `/metrics` scrape endpoint.
+
+**Why push over pull (Prometheus scrape)?**
+
+- Works in serverless and auto-scaled environments where instances are ephemeral — no need for service discovery
+- Works behind NAT/firewalls without exposing ports
+- Compatible with all OTLP backends (Datadog, Grafana Cloud, AWS CloudWatch) out of the box
+- For Prometheus specifically, the OTel Collector can receive push and expose a scrape endpoint — best of both worlds
+
+**What gets exported automatically** (via auto-instrumentation):
+
+- `http.server.request.duration` — histogram of request latency per route/method/status
+- `http.server.active_requests` — gauge of in-flight requests
+- `db.client.connections.*` — pool usage, idle, pending
+
+Custom business metrics (irrigation throughput, watering frequency per plant type) can be added via `@opentelemetry/api`'s `meter.createCounter()` / `meter.createHistogram()` without touching the instrumentation file.
+
+### Production
+
+In production, the local containers (Jaeger, Prometheus, OTel Collector) are replaced by managed services. The app code stays identical — only the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable changes.
+
+| Pillar   | Tool                                    | Notes                                                                           |
+| -------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| Traces   | Datadog APM / AWS X-Ray / Grafana Tempo | Same OTel SDK, swap exporter config via `OTEL_EXPORTER_OTLP_ENDPOINT` env var   |
+| Metrics  | Datadog / CloudWatch / Grafana Mimir    | OTel metrics SDK exports request latency histograms, error rates, DB pool usage |
+| Logs     | CloudWatch Logs / Datadog Logs          | Structured JSON from Pino, enriched with `traceId` for correlation              |
+| Alerting | Datadog Monitors / CloudWatch Alarms    | Alert on p99 latency > threshold, error rate spikes, DB connection saturation   |
+
+**OTel Collector in production** would be deployed as a sidecar (ECS sidecar container or Kubernetes DaemonSet) with:
+
+- **Sampling** — tail-based sampling to reduce trace volume (keep errors + slow requests, sample healthy ones)
+- **Batching** — buffer spans/metrics before export to reduce network calls
+- **Auth + TLS** — mutual TLS between app and collector, API key auth to the backend
+- **Resource detection** — auto-detect cloud metadata (region, instance ID, ECS task ID)
+- **Retry/queue** — persistent queue for export failures to avoid data loss during backend outages
+
+**Production collector config** (example exporting to Datadog):
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        tls:
+          cert_file: /etc/otel/tls/cert.pem
+          key_file: /etc/otel/tls/key.pem
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+  tail_sampling:
+    decision_wait: 10s
+    policies:
+      - name: errors
+        type: status_code
+        status_code: { status_codes: [ERROR] }
+      - name: slow-requests
+        type: latency
+        latency: { threshold_ms: 1000 }
+      - name: probabilistic
+        type: probabilistic
+        probabilistic: { sampling_percentage: 10 }
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: production
+        action: upsert
+
+exporters:
+  datadog:
+    api:
+      key: ${DD_API_KEY} # injected from Secrets Manager at runtime
+      site: datadoghq.eu
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, tail_sampling, resource]
+      exporters: [datadog]
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [datadog]
+```
+
+This config keeps 100% of errors and slow requests (>1s), samples only 10% of healthy traffic, and batches before export. The `${DD_API_KEY}` is injected from Secrets Manager — never hardcoded.
+
+**Deployment architecture** — the app and collector share an ECS task (sidecar pattern):
+
+```
+App (OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318) → OTel Collector sidecar → Datadog
+```
+
+The app always exports to `localhost:4318`. In dev that's the Docker Compose collector routing to Jaeger + Prometheus. In production it's the sidecar routing to Datadog. Same app image, same instrumentation code — only the collector config differs, managed separately via IaC (CDK/Terraform) and stored in SSM Parameter Store or S3.
+
+**Key metrics to track:**
+
+- `http.server.request.duration` (histogram) — p50/p95/p99 latency per route
+- `http.server.active_requests` — concurrent request load
+- `db.client.connections.usage` — pool saturation
+- Error rate by route and status code
+- Irrigation tick duration and failure rate
+
+**Recommended production setup:** Datadog (or Grafana Cloud) with the OTel Collector as an ECS sidecar. The collector receives spans/metrics from the app and forwards them to the backend — this decouples the app from the observability vendor and allows sampling/filtering at the collector level without redeploying the application.
+
+---
+
 ## Production Deployment (AWS)
 
 A production architecture using **ECS Express Mode** — a single API call provisions a complete application stack (ECS service on Fargate, ALB, auto-scaling, networking) without manual infrastructure configuration:
 
 ```
-                    ┌──────────────────┐
-                    │    ALB (HTTPS)   │  (TLS termination, health checks, routing)
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │    ECS Fargate   │  (serverless containers, auto-scaling)
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │    RDS Proxy     │  (connection pooling, IAM auth)
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │   RDS Postgres   │  (Multi-Availability Zone, automated backups)
-                    └──────────────────┘
+ALB (HTTPS) → ECS Fargate (auto-scaling) → RDS Proxy → RDS PostgreSQL (Multi-Availability Zone)
 ```
 
 ### Infrastructure
 
-ECS Express Mode provisions the ALB, Fargate cluster, auto-scaling, security groups, and networking automatically. You provide a container image and two IAM roles:
+| Component            | AWS Service                    | Purpose                                                                                                         |
+| -------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Compute + networking | **ECS Express Mode**           | Single API call provisions ALB, Fargate service, auto-scaling, security groups, and HTTPS                       |
+| Connection pooling   | **RDS Proxy**                  | Multiplexes connections, prevents connection exhaustion across auto-scaled tasks                                |
+| Database             | **RDS PostgreSQL**             | Multi-AZ, automated backups, point-in-time recovery                                                             |
+| Secrets              | **Secrets Manager**            | `DATABASE_URL`, `JWT_SECRET` injected into ECS task definition at runtime                                       |
+| CI/CD                | **GitHub Actions → ECR → ECS** | Build image, push to ECR, deploy via `amazon-ecs-deploy-express-service` GitHub Action (rolling, zero-downtime) |
+| Irrigation scheduler | **EventBridge + Lambda**       | Cron rule (every minute) triggers a Lambda that calls `POST /api/irrigation` per garden                         |
 
-| Component                | AWS Service                    | Purpose                                                                                                        |
-| ------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Compute + networking     | **ECS Express Mode**           | Single API call provisions ALB, Fargate service, auto-scaling, security groups, and HTTPS — no manual setup    |
-| Connection pooling       | **RDS Proxy**                  | Sits between Fargate and RDS, multiplexes connections, prevents connection exhaustion across auto-scaled tasks |
-| Database                 | **RDS PostgreSQL**             | Multi-Availability Zone, automated backups, point-in-time recovery                                             |
-| Secrets                  | **Secrets Manager**            | Store `DATABASE_URL`, `JWT_SECRET`. Injected into task definition as environment variables at runtime          |
-| CI/CD                    | **GitHub Actions → ECR → ECS** | Build image, push to ECR, deploy via `amazon-ecs-deploy-express-service` GitHub Action                         |
-| Irrigation scheduler     | **EventBridge + Lambda**       | Cron rule (e.g., every minute) triggers a Lambda that calls `POST /api/irrigation` for each garden             |
-| Monitoring               | **CloudWatch**                 | Application logs (via awslogs driver), request metrics from ALB, container-level alarms                        |
-| Custom domain (optional) | **Route 53 + ACM**             | DNS routing to ALB with automatic certificate renewal                                                          |
-
-> **Note:** `DATABASE_URL` points to the RDS Proxy endpoint, not the RDS instance directly. RDS Proxy handles connection multiplexing and routes queries to the primary.
-
-For workloads needing fine-grained control (custom routing rules, sidecar containers, service mesh, gRPC), the full ECS Fargate setup with manually configured ALB, target groups, and task definitions remains available — Express Mode resources can be customized after creation.
-
-### Why ECS Express Mode?
-
-AWS deprecated App Runner (closed to new customers) and recommends ECS Express Mode as its replacement. Express Mode provides the same operational simplicity while giving access to the full ECS feature set:
-
-- **Single API call** — provisions ALB, Fargate service, auto-scaling, security groups, and HTTPS endpoint
-- **No additional charge** — pay only for the underlying AWS resources (Fargate tasks, ALB, etc.)
-- **Full ECS access** — we can later customize any provisioned resource (task definitions, scaling policies, networking)
-- **Infrastructure as Code** — can be provisioned via CDK or the AWS CLI for reproducibility and version control
-- **Simpler CI/CD** — dedicated GitHub Action (`amazon-ecs-deploy-express-service`) for automated deployments
+> **Why ECS Express Mode?** AWS deprecated App Runner and recommends Express Mode as its replacement — same simplicity, full ECS feature access, no additional charge, and a dedicated GitHub Action for CI/CD.
 
 ### Deployment Pipeline
 
 ```
-git push → GitHub Actions → docker build → push to ECR → ECS Express Mode deploys
+git push → GitHub Actions → docker build → push to ECR → ECS Express Mode deploys (rolling)
 ```
 
-1. **Build** — Multi-stage Docker build produces a minimal production image (~80MB)
-2. **Push** — Tag with git SHA and `latest`, push to ECR
-3. **Deploy** — `amazon-ecs-deploy-express-service` GitHub Action deploys the new image (rolling deployment, zero downtime)
-4. **Migrate** — Run `npm run migrate` as a one-off ECS task targeting the RDS instance via RDS Proxy
+Migrations run as a one-off ECS task (`npm run migrate`) targeting RDS via RDS Proxy.
 
-### Environment Variables
+### Scaling
 
-Sensitive values are stored in Secrets Manager. ECS Express Mode supports referencing secrets directly:
-
-```json
-{
-  "containerDefinitions": [
-    {
-      "name": "garden-api",
-      "image": "<account_id>.dkr.ecr.<region>.amazonaws.com/garden-api:latest",
-      "portMappings": [{ "containerPort": 3000 }],
-      "secrets": [
-        {
-          "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:<region>:<account_id>:secret:garden-db-url"
-        },
-        {
-          "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:<region>:<account_id>:secret:garden-jwt-secret"
-        }
-      ],
-      "environment": [
-        { "name": "NODE_ENV", "value": "production" },
-        { "name": "PORT", "value": "3000" }
-      ]
-    }
-  ]
-}
-```
-
-### Scaling Considerations
-
-- **Horizontal scaling**: ECS auto-scaling based on ALB request count, CPU, or memory utilization. Configure min/max tasks to control cost vs. availability
-- **Database**: Scale vertically as needed. Add read replicas for report queries if necessary
-- **Connection pooling**: RDS Proxy sits between Fargate tasks and RDS, multiplexing connections and preventing exhaustion as tasks auto-scale
+- **Horizontal**: ECS auto-scaling on ALB request count / CPU / memory
+- **Database**: Vertical scaling + read replicas for report queries
+- **Connections**: RDS Proxy multiplexes across all Fargate tasks

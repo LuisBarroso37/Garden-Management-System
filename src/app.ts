@@ -16,6 +16,7 @@ import { plantRoutes } from './routes/plants.js';
 import { irrigationRoutes } from './routes/irrigation.js';
 import { reportRoutes } from './routes/report.js';
 import { authRoutes } from './routes/auth.js';
+import { logMutationRequest } from './utils/request-logger.js';
 
 export async function buildApp(config: Config) {
   const app = Fastify({
@@ -59,7 +60,12 @@ export async function buildApp(config: Config) {
   }
 
   app.get('/health-check', { schema: { tags: ['System'] } }, async (_request, reply) => {
-    reply.status(200).send();
+    reply.status(200).send({ status: 'ok' });
+  });
+
+  app.addHook('preHandler', (request, _reply, done) => {
+    logMutationRequest(request);
+    done();
   });
 
   app.setErrorHandler((error: FastifyError, _request, reply) => {

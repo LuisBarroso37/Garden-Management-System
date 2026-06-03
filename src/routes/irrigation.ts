@@ -23,6 +23,9 @@ import {
 } from '../utils/irrigation.js';
 import type { Selectable } from 'kysely';
 import type { Plant, PlantMetric } from '../db/types.js';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('irrigation');
 
 interface TickContext {
   now: Dayjs;
@@ -37,64 +40,99 @@ const processPlantTick = async (
   irrigationConnector: IrrigationConnector,
   plantMetricConnector: PlantMetricConnector,
 ): Promise<void> => {
-  if (!plantMetric) {
-    return;
-  }
+  return tracer.startActiveSpan(
+    'irrigation.processPlantTick',
+    {
+      attributes: {
+        'app.plantId': plant.id,
+        'app.gardenId': ctx.gardenId,
+        'app.plantType': plant.plantType,
+      },
+    },
+    async (span) => {
+      try {
+        if (!plantMetric) {
+          span.addEvent('skipped', { reason: 'no metric record' });
+          return;
+        }
 
-  if (isWithinIrrigationEndWindow(ctx.now, plantMetric.lastIrrigationEndTime)) {
-    await irrigationConnector.sendCommand({
-      type: 'STOP_WATERING',
-      plantId: plant.id,
-      gardenId: ctx.gardenId,
-      timestamp: ctx.timestamp,
-    });
-    await plantMetricConnector.createPlantMetric({
-      plantId: plant.id,
-      currentHumidityLevel: computeHumidityAfterWatering(
-        plantMetric.currentHumidityLevel,
-        plant.plantType,
-      ),
-      lastIrrigationStartTime: plantMetric.lastIrrigationStartTime ?? undefined,
-      lastIrrigationEndTime: plantMetric.lastIrrigationEndTime ?? undefined,
-    });
-    return;
-  }
+        span.setAttribute('app.currentHumidity', plantMetric.currentHumidityLevel);
+        span.setAttribute('app.idealHumidity', plant.idealHumidityLevel);
 
-  if (isCurrentlyBeingWatered(ctx.now, plantMetric.lastIrrigationEndTime)) {
-    await plantMetricConnector.createPlantMetric({
-      plantId: plant.id,
-      currentHumidityLevel: plantMetric.currentHumidityLevel,
-      lastIrrigationStartTime: plantMetric.lastIrrigationStartTime ?? undefined,
-      lastIrrigationEndTime: plantMetric.lastIrrigationEndTime ?? undefined,
-    });
-    return;
-  }
+        if (isWithinIrrigationEndWindow(ctx.now, plantMetric.lastIrrigationEndTime)) {
+          span.addEvent('stop_watering');
 
-  const currentHumidityLevel = computeHumidityAfterDrop(
-    plantMetric.currentHumidityLevel,
-    plant.plantType,
+          await irrigationConnector.sendCommand({
+            type: 'STOP_WATERING',
+            plantId: plant.id,
+            gardenId: ctx.gardenId,
+            timestamp: ctx.timestamp,
+          });
+          await plantMetricConnector.createPlantMetric({
+            plantId: plant.id,
+            currentHumidityLevel: computeHumidityAfterWatering(
+              plantMetric.currentHumidityLevel,
+              plant.plantType,
+            ),
+            lastIrrigationStartTime: plantMetric.lastIrrigationStartTime ?? undefined,
+            lastIrrigationEndTime: plantMetric.lastIrrigationEndTime ?? undefined,
+          });
+          return;
+        }
+
+        if (isCurrentlyBeingWatered(ctx.now, plantMetric.lastIrrigationEndTime)) {
+          span.addEvent('currently_watering');
+
+          await plantMetricConnector.createPlantMetric({
+            plantId: plant.id,
+            currentHumidityLevel: plantMetric.currentHumidityLevel,
+            lastIrrigationStartTime: plantMetric.lastIrrigationStartTime ?? undefined,
+            lastIrrigationEndTime: plantMetric.lastIrrigationEndTime ?? undefined,
+          });
+          return;
+        }
+
+        const currentHumidityLevel = computeHumidityAfterDrop(
+          plantMetric.currentHumidityLevel,
+          plant.plantType,
+        );
+
+        span.setAttribute('app.humidityAfterDrop', currentHumidityLevel);
+
+        if (needsIrrigation(currentHumidityLevel, plant.idealHumidityLevel)) {
+          span.addEvent('start_watering', {
+            humidity: currentHumidityLevel,
+            threshold: plant.idealHumidityLevel,
+          });
+
+          await irrigationConnector.sendCommand({
+            type: 'START_WATERING',
+            plantId: plant.id,
+            gardenId: ctx.gardenId,
+            timestamp: ctx.timestamp,
+            durationSeconds: WATERING_DURATION_MINUTES * 60,
+          });
+          await plantMetricConnector.createPlantMetric({
+            plantId: plant.id,
+            currentHumidityLevel,
+            lastIrrigationStartTime: ctx.timestamp,
+            lastIrrigationEndTime: computeIrrigationEndTime(ctx.now),
+          });
+        } else {
+          span.addEvent('humidity_ok');
+          await plantMetricConnector.createPlantMetric({
+            plantId: plant.id,
+            currentHumidityLevel,
+          });
+        }
+      } catch (error) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
+        throw error;
+      } finally {
+        span.end();
+      }
+    },
   );
-
-  if (needsIrrigation(currentHumidityLevel, plant.idealHumidityLevel)) {
-    await irrigationConnector.sendCommand({
-      type: 'START_WATERING',
-      plantId: plant.id,
-      gardenId: ctx.gardenId,
-      timestamp: ctx.timestamp,
-      durationSeconds: WATERING_DURATION_MINUTES * 60,
-    });
-    await plantMetricConnector.createPlantMetric({
-      plantId: plant.id,
-      currentHumidityLevel,
-      lastIrrigationStartTime: ctx.timestamp,
-      lastIrrigationEndTime: computeIrrigationEndTime(ctx.now),
-    });
-  } else {
-    await plantMetricConnector.createPlantMetric({
-      plantId: plant.id,
-      currentHumidityLevel,
-    });
-  }
 };
 
 export const createIrrigationRoutes =
@@ -124,6 +162,8 @@ export const createIrrigationRoutes =
       async (request, reply) => {
         const { gardenId } = request.body;
         const { userId } = request;
+
+        trace.getActiveSpan()?.setAttribute('app.gardenId', gardenId);
 
         const plants = await plantConnector.getPlants(userId, gardenId);
 
@@ -173,6 +213,12 @@ export const createIrrigationRoutes =
 
         const processed = plants.length - failures.length;
         const responseBody = { processed, failed: failures };
+
+        trace.getActiveSpan()?.setAttributes({
+          'app.irrigation.plantCount': plants.length,
+          'app.irrigation.processed': processed,
+          'app.irrigation.failed': failures.length,
+        });
 
         if (failures.length === plants.length) {
           return reply.status(500).send(responseBody);

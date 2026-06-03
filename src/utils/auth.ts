@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
+import { trace } from '@opentelemetry/api';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../config.js';
 import { dayjs } from './dayjs.js';
@@ -73,6 +74,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   try {
     const payload = verifyAccessToken(token);
     request.userId = payload.sub;
+    trace.getActiveSpan()?.setAttribute('user.id', payload.sub);
   } catch {
     return reply.status(401).send({
       errorType: 'UNAUTHORIZED',

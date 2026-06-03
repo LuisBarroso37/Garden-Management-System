@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncZodOpenApi } from 'fastify-zod-openapi';
+import { trace } from '@opentelemetry/api';
 import {
   createGardenSchema,
   updateGardenSchema,
@@ -56,6 +57,8 @@ export const createGardenRoutes =
         const { gardenId } = request.params;
         const { userId } = request;
 
+        trace.getActiveSpan()?.setAttribute('app.gardenId', gardenId);
+
         const garden = await gardenConnector.getGarden(userId, gardenId);
 
         if (!garden) {
@@ -107,6 +110,8 @@ export const createGardenRoutes =
         const { gardenId } = request.params;
         const { body, userId } = request;
 
+        trace.getActiveSpan()?.setAttribute('app.gardenId', gardenId);
+
         const garden = await gardenConnector.updateGarden(userId, gardenId, body);
 
         if (!garden) {
@@ -138,6 +143,8 @@ export const createGardenRoutes =
       async (request, reply) => {
         const { gardenId } = request.params;
         const { userId } = request;
+
+        trace.getActiveSpan()?.setAttribute('app.gardenId', gardenId);
 
         await gardenConnector.deleteGarden(userId, gardenId);
 

@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { FastifyPluginAsyncZodOpenApi } from 'fastify-zod-openapi';
+import { trace } from '@opentelemetry/api';
 import { errorResponseSchema } from '../schemas/error.js';
 import { plantConnector, type PlantConnector } from '../connectors/plant.connector.js';
 import {
@@ -46,6 +47,8 @@ export const createPlantRoutes =
         const { gardenId } = request.params;
         const { userId } = request;
 
+        trace.getActiveSpan()?.setAttribute('app.gardenId', gardenId);
+
         return plantConnector.getPlants(userId, gardenId);
       },
     );
@@ -65,6 +68,11 @@ export const createPlantRoutes =
       async (request, reply) => {
         const { gardenId, plantId } = request.params;
         const { userId } = request;
+
+        trace.getActiveSpan()?.setAttributes({
+          'app.gardenId': gardenId,
+          'app.plantId': plantId,
+        });
 
         const plant = await plantConnector.getPlant(userId, gardenId, plantId);
 
@@ -93,6 +101,8 @@ export const createPlantRoutes =
       async (request, reply) => {
         const { gardenId } = request.params;
         const { body, userId } = request;
+
+        trace.getActiveSpan()?.setAttribute('app.gardenId', gardenId);
 
         const garden = await gardenConnector.getGarden(userId, gardenId);
 
@@ -143,6 +153,11 @@ export const createPlantRoutes =
         const { gardenId, plantId } = request.params;
         const { body, userId } = request;
 
+        trace.getActiveSpan()?.setAttributes({
+          'app.gardenId': gardenId,
+          'app.plantId': plantId,
+        });
+
         if (body.surfaceAreaRequired) {
           const garden = await gardenConnector.getGarden(userId, gardenId);
 
@@ -188,6 +203,11 @@ export const createPlantRoutes =
       async (request, reply) => {
         const { gardenId, plantId } = request.params;
         const { userId } = request;
+
+        trace.getActiveSpan()?.setAttributes({
+          'app.gardenId': gardenId,
+          'app.plantId': plantId,
+        });
 
         await plantConnector.deletePlant(userId, gardenId, plantId);
 

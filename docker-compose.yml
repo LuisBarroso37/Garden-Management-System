@@ -3,7 +3,7 @@ services:
     build:
       context: .
       target: deps
-    command: npx tsx watch src/server.ts
+    command: npx tsx watch --import ./src/instrumentation.ts src/server.ts
     volumes:
       - .:/app
       - /app/node_modules
@@ -19,12 +19,49 @@ services:
       - DATABASE_URL=postgresql://garden_user:garden_pass@db:5432/garden_db
       - PORT=3000
       - CORS_ORIGIN=*
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
     ports:
       - "3000:3000"
       - "9229:9229" # remote debugging port
     depends_on:
       db:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    configs:
+      - source: otel-collector-config
+        target: /etc/otelcol-contrib/config.yaml
+    ports:
+      - "4318:4318" # OTLP HTTP receiver
+      - "8889:8889" # Prometheus exporter
+    depends_on:
+      jaeger:
+        condition: service_healthy
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686" # UI
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:16686 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    configs:
+      - source: prometheus-config
+        target: /etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090" # Prometheus UI
+    depends_on:
+      - otel-collector
 
   db:
     image: postgres:18-alpine
@@ -44,3 +81,33 @@ services:
 
 volumes:
   pgdata:
+
+configs:
+  otel-collector-config:
+    content: |
+      receivers:
+        otlp:
+          protocols:
+            http:
+              endpoint: 0.0.0.0:4318
+      exporters:
+        otlphttp/jaeger:
+          endpoint: http://jaeger:4318
+        prometheus:
+          endpoint: 0.0.0.0:8889
+      service:
+        pipelines:
+          traces:
+            receivers: [otlp]
+            exporters: [otlphttp/jaeger]
+          metrics:
+            receivers: [otlp]
+            exporters: [prometheus]
+  prometheus-config:
+    content: |
+      global:
+        scrape_interval: 10s
+      scrape_configs:
+        - job_name: otel-collector
+          static_configs:
+            - targets: ['otel-collector:8889']
